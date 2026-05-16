@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import shlex
 from datetime import date
+from pathlib import Path
 
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, Input, Label, ListView
 
+import launcher
 from parsing import next_occurrence, parse_input
 from row import Row
-from store import Store
+from store import DATA_PATH, Store
 from subtask import Subtask
 from todo_item import Todo
 from todo_row import TodoRow
@@ -31,6 +34,8 @@ class TodoApp(App):
         Binding("space", "toggle", "Toggle"),
         Binding("enter", "toggle", "Toggle", show=False),
         Binding("d", "delete", "Delete"),
+        Binding("f", "folder", "Folder"),
+        Binding("c", "claude", "Claude"),
         Binding("left,h", "prev_day", "← Day"),
         Binding("right,l", "next_day", "Day →"),
         Binding("t", "today", "Today"),
@@ -129,6 +134,70 @@ class TodoApp(App):
             return
         self._open_input(f"Subtask of: {row.parent.text}", f"sub:{row.parent.id}")
 
+    def action_folder(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.notify("Select a todo first.", severity="warning")
+            return
+        if row.sub is not None:
+            self.notify("Folders attach to a todo, not a subtask.", severity="warning")
+            return
+        current = row.parent.folder or "none"
+        self._open_input(f"Project folder (now: {current}; '-' to detach)", f"folder:{row.parent.id}")
+
+    def action_claude(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        project = row.parent
+        if not project.folder:
+            self.notify("Attach a folder first (f) to use Claude here.", severity="warning")
+            return
+        if not Path(project.folder).is_dir():
+            self.notify(f"Folder no longer exists: {project.folder}", severity="error")
+            return
+        if row.sub is None:
+            self._launch_main_session(project)
+        else:
+            self._launch_subtask_session(project, row.sub)
+
+    def _launch_main_session(self, project: Todo) -> None:
+        window = project.claude_window or f"todo-{project.id}"
+        prompt = (
+            f"This is the design session for the coding project {project.text!r}. "
+            "Work with me to plan the build as concrete, ordered steps. The "
+            f"todo-tui data file is {DATA_PATH}; this project is the todo with "
+            f'id "{project.id}". As we agree on a step, append it to that todo\'s '
+            '"subtasks" list as {"id": <8 hex chars>, "text": <step>, '
+            '"done": false, "status": "proposed"}, so I can curate it in the TUI.'
+        )
+        try:
+            launcher.open_session(
+                project.folder, "claude " + shlex.quote(prompt),
+                window_name=window, reuse=True,
+            )
+        except RuntimeError as e:
+            self.notify(str(e), severity="error")
+            return
+        project.claude_window = window
+        self.store.save()
+        self.refresh_list()
+        self.notify(f"Design session: {project.text}")
+
+    def _launch_subtask_session(self, project: Todo, sub: Subtask) -> None:
+        siblings = [s.text for s in project.subtasks if s.id != sub.id]
+        context = f" Other planned steps: {'; '.join(siblings)}." if siblings else ""
+        prompt = (
+            f"You're implementing one step of the project {project.text!r}, in "
+            f"the folder {project.folder}. The step to do: {sub.text}.{context}"
+        )
+        try:
+            launcher.open_session(project.folder, "claude " + shlex.quote(prompt))
+        except RuntimeError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.notify(f"Claude on: {sub.text}")
+
     @on(Input.Submitted, "#new")
     def add_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -162,6 +231,20 @@ class TodoApp(App):
                 self.notify(f"Score must be 0..{target.max_score}.", severity="error")
                 return
             self._complete_parent(target, score=val)
+        elif mode.startswith("folder:"):
+            pid = mode.split(":", 1)[1]
+            target = next((t for t in self.store.todos if t.id == pid), None)
+            if target is None:
+                return
+            if text == "-":
+                target.folder = None
+                target.claude_window = None
+            else:
+                p = Path(text).expanduser()
+                if not p.is_dir():
+                    self.notify(f"Not a directory: {p}", severity="error")
+                    return
+                target.folder = str(p.resolve())
         self.store.save()
         self.refresh_list()
 

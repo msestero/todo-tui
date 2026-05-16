@@ -17,6 +17,8 @@ class Todo:
     repeat: str | None = None  # "daily" | "weekdays" | "weekly" | "<N>d"
     max_score: int | None = None
     score: int | None = None
+    folder: str | None = None  # absolute path; non-null marks a coding project
+    claude_window: str | None = None  # tmux window name of its main design session
 
     @staticmethod
     def new(text: str, repeat: str | None = None, max_score: int | None = None) -> "Todo":
@@ -35,8 +37,10 @@ class Todo:
             text=raw["text"],
             date=raw["date"],
             done=raw.get("done", False),
-            subtasks=[Subtask(**s) for s in raw.get("subtasks", [])],
+            subtasks=[Subtask.from_dict(s) for s in raw.get("subtasks", [])],
             repeat=raw.get("repeat"),
             max_score=raw.get("max_score"),
             score=raw.get("score"),
+            folder=raw.get("folder"),
+            claude_window=raw.get("claude_window"),
         )

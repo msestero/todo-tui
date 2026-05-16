@@ -16,25 +16,50 @@ DATA_PATH = Path(os.environ.get("TODO_TUI_DATA", Path.home() / ".config" / "todo
 class Store:
     todos: list[Todo] = field(default_factory=list)
     last_opened: str = ""
+    # mtime of DATA_PATH when last read; used to detect external writes.
+    _loaded_mtime: float | None = field(default=None, repr=False)
 
     @classmethod
     def load(cls) -> "Store":
         if not DATA_PATH.exists():
             return cls()
         raw = json.loads(DATA_PATH.read_text())
-        return cls(
+        store = cls(
             todos=[Todo.from_dict(t) for t in raw.get("todos", [])],
             last_opened=raw.get("last_opened", ""),
         )
+        store._loaded_mtime = DATA_PATH.stat().st_mtime
+        return store
+
+    def _merge_external(self) -> None:
+        """The file changed under us (e.g. a Claude design session wrote to it).
+        Pull in todos and subtasks we don't have so external additions survive
+        our save. Our in-memory state wins for anything we already track."""
+        try:
+            raw = json.loads(DATA_PATH.read_text())
+        except (OSError, ValueError):
+            return
+        by_id = {t.id: t for t in self.todos}
+        for dt in (Todo.from_dict(t) for t in raw.get("todos", [])):
+            mine = by_id.get(dt.id)
+            if mine is None:
+                self.todos.append(dt)
+                continue
+            have = {s.id for s in mine.subtasks}
+            mine.subtasks.extend(s for s in dt.subtasks if s.id not in have)
 
     def save(self) -> None:
         DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if self._loaded_mtime is not None and DATA_PATH.exists():
+            if DATA_PATH.stat().st_mtime > self._loaded_mtime:
+                self._merge_external()
         DATA_PATH.write_text(
             json.dumps(
                 {"todos": [asdict(t) for t in self.todos], "last_opened": self.last_opened},
                 indent=2,
             )
         )
+        self._loaded_mtime = DATA_PATH.stat().st_mtime
 
     def rollover(self) -> int:
         today = date.today().isoformat()

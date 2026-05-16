@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.widgets import ListItem, Static
@@ -25,6 +27,8 @@ class TodoRow(ListItem):
                 extras.append(f"{sc}/{r.parent.max_score}")
             if r.parent.repeat:
                 extras.append(f"↻{r.parent.repeat}")
+            if r.parent.folder:
+                extras.append(f"📁{escape(os.path.basename(r.parent.folder))}")
             tail = "  [dim]" + " ".join(extras) + "[/]" if extras else ""
             if r.parent.done:
                 yield Static(f"[green]✔[/]  [strike dim]{text}[/]{tail}")
