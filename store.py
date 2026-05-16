@@ -47,8 +47,11 @@ class Store:
         return moved
 
     def dates(self) -> list[str]:
-        ds = {t.date for t in self.todos}
-        ds.add(date.today().isoformat())
+        # Future-dated todos (e.g. spawned by repeating tasks) exist in storage
+        # but stay hidden from navigation until their day actually arrives.
+        today = date.today().isoformat()
+        ds = {t.date for t in self.todos if t.date <= today}
+        ds.add(today)
         return sorted(ds)
 
     def by_date(self, d: str) -> list[Todo]:
