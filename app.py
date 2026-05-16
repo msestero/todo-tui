@@ -165,10 +165,15 @@ class TodoApp(App):
         window = project.claude_window or f"todo-{project.id}"
         prompt = (
             f"This is the design session for the coding project {project.text!r}. "
-            "Work with me to plan the build as concrete, ordered steps. The "
-            f"todo-tui data file is {DATA_PATH}; this project is the todo with "
-            f'id "{project.id}". As we agree on a step, append it to that todo\'s '
-            '"subtasks" list as {"id": <8 hex chars>, "text": <step>, '
+            "You are running in the project's own folder. Work with me to: "
+            "(1) plan the build as concrete, ordered steps; and "
+            "(2) create and keep updating a CLAUDE.md in this folder that "
+            "captures the architecture, conventions, and plan — later Claude "
+            "sessions build the individual steps in this same folder and rely "
+            "on that CLAUDE.md for guidance. "
+            f"The todo-tui data file is {DATA_PATH}; this project is the todo "
+            f'with id "{project.id}". As we agree on a step, append it to that '
+            'todo\'s "subtasks" list as {"id": <8 hex chars>, "text": <step>, '
             '"done": false, "status": "proposed"}, so I can curate it in the TUI.'
         )
         try:

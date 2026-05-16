@@ -38,7 +38,7 @@ Three layers:
 ## Claude integration (coding projects)
 
 A `Todo` with a non-null `folder` is a *coding project*. The `c` key launches Claude via `launcher.open_session` (a new tmux window, a split pane if `TODO_TUI_TMUX_SPLIT` is set, or a standalone terminal outside tmux):
-- on a **project parent** → its **main design session**, a persistent tmux window (`claude_window`) reattached on reopen. The session is prompted to append build steps to the project's `subtasks` with `status: "proposed"`.
+- on a **project parent** → its **main design session**, a persistent tmux window (`claude_window`) reattached on reopen. The session is prompted to append build steps to the project's `subtasks` with `status: "proposed"` and to create/maintain a `CLAUDE.md` in the project folder — which the per-subtask sessions then pick up automatically since they run in that same folder.
 - on a **subtask** → a one-off interactive Claude scoped to the folder, prompted with that step plus its siblings.
 
 `Subtask.status` is `"active"` (normal), `"proposed"` (suggested by a design session, awaiting curation), or `"skipped"`. The curation UI (accept/skip/reload keys, distinct rendering) is **not yet built** — Phase 2.
