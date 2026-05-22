@@ -12,47 +12,43 @@ There is no build step, no test suite, and no linter configured. Dependencies (`
 
 ## Architecture
 
-[Textual](https://textual.textualize.io/) TUI. One class per module; `todo.py` is a thin entry point that imports and runs `TodoApp`. Modules import siblings by bare name (`from store import Store`) — this works because `todo.py` is run as a script, putting its directory on `sys.path`; there is no package/`__init__.py`. Import order, low to high: `subtask` → `parsing` → `todo_item` → `store` / `row` / `launcher` → `todo_row` / `forms` → `app`.
+[Textual](https://textual.textualize.io/) TUI. One class per module; `todo.py` is a thin entry point that imports and runs `TodoApp`. Modules import siblings by bare name (`from store import Store`) — this works because `todo.py` is run as a script, putting its directory on `sys.path`; there is no package/`__init__.py`. Import order, low to high: `subtask` → `todo_item` → `store` / `row` → `todo_row` / `forms` → `app`.
 
 | File | Contents |
 |------|----------|
 | `subtask.py` | `Subtask` dataclass |
-| `parsing.py` | `next_occurrence`, `migrate_repeat`, `repeat_label` |
-| `todo_item.py` | `Todo` dataclass (depends on `parsing.migrate_repeat`) |
+| `todo_item.py` | `Todo` dataclass |
 | `store.py` | `Store`, `DATA_PATH` |
 | `row.py` | `Row` (flattened parent+subtask view model) |
 | `todo_row.py` | `TodoRow` (the `ListItem` widget) |
-| `forms.py` | `TodoForm`, `SubtaskForm` — modal `ModalScreen`s for add/edit |
-| `launcher.py` | `open_session` — tmux-aware terminal spawning |
+| `forms.py` | `TodoForm`, `SubtaskForm`, `NewFolderForm` — modal `ModalScreen`s |
+| `launcher.py` | `launch(folders, session_id, session_name)` — tmux pane layout |
 | `app.py` | `TodoApp` |
 
 Three layers:
 
-**Persistence** — `Store` holds all `Todo`s and serializes the entire collection to one JSON file on every mutation. There is no partial/incremental write: every action calls `store.save()` then `refresh_list()`. `Todo.from_dict` / `Subtask.from_dict` handle backward-compatible loading (missing fields default, unknown keys ignored), so adding new optional fields is safe for existing data files. `Store.save()` checks the file's mtime first: if a Claude design session edited the file underneath the running TUI, `_merge_external()` pulls in the new todos/subtasks before writing so external additions are not clobbered.
+**Persistence** — `Store` holds all `Todo`s and serializes the entire collection to one JSON file on every mutation. There is no partial/incremental write: every action calls `_save_and_refresh()`. `Store.save()` is atomic (write to `*.tmp` sibling, then `os.replace`) so a kill mid-write cannot corrupt the file. `Todo.from_dict` / `Subtask.from_dict` handle backward-compatible loading (missing fields default, unknown keys ignored), so adding new optional fields is safe for existing data files.
 
-**Domain model** — `Todo` (parent) owns a list of `Subtask`s. Todos are bucketed by an ISO date string (`Todo.date`), and the UI only ever shows one day at a time. Key cross-cutting rules live in two methods, not in the UI handlers:
+**Domain model** — `Todo` (parent) owns a list of `Subtask`s. Todos are bucketed by an ISO date string (`Todo.date`), and the UI only ever shows one day at a time. Two cross-cutting rules live outside the UI handlers:
 - `Store.rollover()` runs once at startup: any incomplete todo dated in the past is moved to today, so nothing is ever stranded on an old day.
-- `_complete_parent()` / `_uncomplete_parent()` are the *only* correct ways to flip a parent's done state. Completing a repeating todo spawns a dated clone (with fresh subtask copies) for its next occurrence; completing a scored todo records its score. Do not set `todo.done` directly — route through these.
+- `_complete_parent()` / `_uncomplete_parent()` are the *only* correct ways to flip a parent's done state. Do not set `todo.done` directly — route through these.
 
-**UI** — `TodoApp` renders the current day's todos via a `ListView`. The parent/subtask tree is flattened into a `list[Row]` (`Row` = parent + optional subtask) by `_flatten`; `ListView.index` maps back into `self._rows`. Adding/editing parents and subtasks is done through modal `ModalScreen`s in `forms.py` (`TodoForm`, `SubtaskForm`) — `push_screen(form, callback)` returns a result dict or `None` to the app. The bottom docked `Input` is now used only for the `score:` flow (collecting a single integer when toggling a scored todo); `self._input_mode` is the string tag for that one flow.
+**UI** — `TodoApp` renders the current day's todos via a `ListView`. The parent/subtask tree is flattened into a `list[Row]` (`Row` = parent + optional subtask) by `_flatten`; `ListView.index` maps back into `self._rows`. Adding/editing parents and subtasks is done through modal `ModalScreen`s in `forms.py`: `TodoForm` and `SubtaskForm` are both thin subclasses of `_ItemForm` (same shape, different placeholder). The form dismisses with `dict | None` — `{"text": str, "folders": list[str], "claude_session_id": str | None}` on save, `None` on cancel.
 
-## Claude integration (coding projects)
+The footer is bare — only `? Help` is shown. Pressing `?` opens `HelpScreen` (in `app.py`), which lists every binding sourced from the `HELP_ENTRIES` table at the top of the file.
 
-A `Todo` with a non-null `folder` is a *coding project*. The `c` key launches Claude via `launcher.open_session` (a new tmux window, a split pane if `TODO_TUI_TMUX_SPLIT` is set, or a standalone terminal outside tmux):
-- on a **project parent** → its **main design session**, a persistent tmux window (`claude_window`) reattached on reopen. The session is prompted to append build steps to the project's `subtasks` with `status: "proposed"` and to create/maintain a `CLAUDE.md` in the project folder — which the per-subtask sessions then pick up automatically since they run in that same folder.
-- on a **subtask** → a one-off interactive Claude scoped to the folder, prompted with that step plus its siblings.
+## Claude integration
 
-`Subtask.status` is `"active"` (normal), `"proposed"` (suggested by a design session, awaiting curation), or `"skipped"`. The curation UI (accept/skip/reload keys, distinct rendering) is **not yet built** — Phase 2.
+Pressing `c` on a row opens a tmux layout — left pane runs `claude` (resumes via `--resume <id>` if `claude_session_id` is set, else fresh), right column has one shell per folder stacked vertically.
+
+- **Folder resolution.** A subtask inherits the parent's folders if its own `folders` list is empty; the session id is always the row's own. If neither parent nor subtask has any folders, a `NewFolderForm` modal asks for a name, creates `~/TodoList/<name>`, attaches it to the **parent** (since subtasks inherit), saves, and continues to launch.
+- **tmux behavior.** Inside tmux, opens a new window named `todo-<id>`. Outside tmux, creates a detached session and spawns a terminal (`$TERMINAL` if set, otherwise tries alacritty/kitty/wezterm/foot/ghostty/gnome-terminal/konsole/xterm) attached to it.
+- **Capturing new session ids.** Fresh `claude` invocations don't automatically populate `claude_session_id` — paste the id back in via the edit form (`e`) once you know it. Subsequent `c` will resume.
+- **Folder paths** are `expanduser()`-resolved before launch; if a folder no longer exists, the launch aborts with a notification (it does *not* auto-recreate).
 
 ## Behaviors worth knowing before editing
 
-- **Add/edit forms** — `a` opens `TodoForm` for a new parent; `s` opens `SubtaskForm` under the selected parent; `e` opens the appropriate edit form for the selected row. The todo form collects text, max_score, repeat, and folder in one shot; there is no inline `/N` / `*daily` syntax anymore.
-- **Repeat schema** — `Todo.repeat` is a dict (or `None`):
-  - `{"kind": "days", "days": [0..6, ...]}` (0=Mon..6=Sun)
-  - `{"kind": "cycle", "on": int≥1, "off": int≥0, "anchor": "YYYY-MM-DD"}` — period is `on+off`; the first `on` days of each period (counted from `anchor`) are scheduled.
-  Legacy string repeats from older JSON files (`"daily"`/`"weekdays"`/`"weekly"`/`"<N>d"`) are migrated by `parsing.migrate_repeat` on load. `parsing.next_occurrence(repeat, today)` returns the next scheduled date strictly after `today`. `parsing.repeat_label(repeat)` produces the short tag rendered in `TodoRow`.
-- **Editing repeat** — by design, editing a parent's repeat does **not** reschedule any already-spawned future-dated clones. Only the next spawn (after the next completion) uses the new rule.
-- **Scored todos** don't toggle done directly — toggling opens the bottom `Input` in `score:` mode to collect a 0..max integer.
-- **Subtask/parent sync** (`action_toggle`): checking the last subtask auto-completes a non-scored parent; unchecking one re-opens a completed parent.
+- **Add/edit forms** — `a` opens `TodoForm` for a new parent; `s` opens `SubtaskForm` under the selected parent; `e` opens the appropriate edit form for the selected row. Both forms collect `text`, `folders` (comma-separated, parsed into a list by `_parse_folders`), and an optional `claude_session_id`. Inline labels, no title, up/down navigation, `enter` saves, `esc` cancels.
+- **Subtask/parent sync** (`action_toggle`): checking the last subtask auto-completes the parent; unchecking one re-opens a completed parent.
 - **Reviving** — toggling a *done* todo while viewing a past day un-completes it, moves it to today, and jumps the view to today.
 - **Adding is today-only** — `action_add` / `action_add_sub` refuse unless `_viewing_today()`.

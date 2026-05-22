@@ -15,69 +15,39 @@ DATA_PATH = Path(os.environ.get("TODO_TUI_DATA", Path.home() / ".config" / "todo
 @dataclass
 class Store:
     todos: list[Todo] = field(default_factory=list)
-    last_opened: str = ""
-    # mtime of DATA_PATH when last read; used to detect external writes.
-    _loaded_mtime: float | None = field(default=None, repr=False)
 
     @classmethod
     def load(cls) -> "Store":
         if not DATA_PATH.exists():
             return cls()
-        raw = json.loads(DATA_PATH.read_text())
-        store = cls(
-            todos=[Todo.from_dict(t) for t in raw.get("todos", [])],
-            last_opened=raw.get("last_opened", ""),
-        )
-        store._loaded_mtime = DATA_PATH.stat().st_mtime
-        return store
-
-    def _merge_external(self) -> None:
-        """The file changed under us (e.g. a Claude design session wrote to it).
-        Pull in todos and subtasks we don't have so external additions survive
-        our save. Our in-memory state wins for anything we already track."""
-        try:
-            raw = json.loads(DATA_PATH.read_text())
-        except (OSError, ValueError):
-            return
-        by_id = {t.id: t for t in self.todos}
-        for dt in (Todo.from_dict(t) for t in raw.get("todos", [])):
-            mine = by_id.get(dt.id)
-            if mine is None:
-                self.todos.append(dt)
-                continue
-            have = {s.id for s in mine.subtasks}
-            mine.subtasks.extend(s for s in dt.subtasks if s.id not in have)
+        raw = json.loads(DATA_PATH.read_text(encoding="utf-8"))
+        return cls(todos=[Todo.from_dict(t) for t in raw.get("todos", [])])
 
     def save(self) -> None:
+        """Atomic write: dump to a sibling temp file, then rename over the target."""
         DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if self._loaded_mtime is not None and DATA_PATH.exists():
-            if DATA_PATH.stat().st_mtime > self._loaded_mtime:
-                self._merge_external()
-        DATA_PATH.write_text(
-            json.dumps(
-                {"todos": [asdict(t) for t in self.todos], "last_opened": self.last_opened},
-                indent=2,
-            )
-        )
-        self._loaded_mtime = DATA_PATH.stat().st_mtime
+        tmp_path = DATA_PATH.with_suffix(DATA_PATH.suffix + ".tmp")
+        payload = json.dumps({"todos": [asdict(t) for t in self.todos]}, indent=2)
+        tmp_path.write_text(payload, encoding="utf-8")
+        os.replace(tmp_path, DATA_PATH)
 
     def rollover(self) -> int:
+        """Move every unfinished past-dated todo to today. Returns the count moved."""
         today = date.today().isoformat()
         moved = 0
-        for t in self.todos:
-            if not t.done and t.date < today:
-                t.date = today
+        for todo in self.todos:
+            if not todo.done and todo.date < today:
+                todo.date = today
                 moved += 1
-        self.last_opened = today
         return moved
 
     def dates(self) -> list[str]:
         # Future-dated todos (e.g. spawned by repeating tasks) exist in storage
         # but stay hidden from navigation until their day actually arrives.
         today = date.today().isoformat()
-        ds = {t.date for t in self.todos if t.date <= today}
-        ds.add(today)
-        return sorted(ds)
+        visible = {todo.date for todo in self.todos if todo.date <= today}
+        visible.add(today)
+        return sorted(visible)
 
-    def by_date(self, d: str) -> list[Todo]:
-        return [t for t in self.todos if t.date == d]
+    def by_date(self, target_date: str) -> list[Todo]:
+        return [todo for todo in self.todos if todo.date == target_date]

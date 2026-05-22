@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
-# status values: "active" (a normal step), "proposed" (suggested by a Claude
-# design session, awaiting curation), "skipped" (kept for the record, won't do).
 @dataclass
 class Subtask:
     id: str
     text: str
     done: bool = False
-    status: str = "active"
+    folders: list[str] = field(default_factory=list)
+    claude_session_id: str | None = None
 
     @staticmethod
-    def new(text: str, status: str = "active") -> "Subtask":
-        return Subtask(id=uuid.uuid4().hex[:8], text=text, status=status)
+    def new(
+        text: str,
+        folders: list[str] | None = None,
+        claude_session_id: str | None = None,
+    ) -> "Subtask":
+        return Subtask(
+            id=uuid.uuid4().hex[:8],
+            text=text,
+            folders=list(folders or []),
+            claude_session_id=claude_session_id,
+        )
 
     @classmethod
     def from_dict(cls, raw: dict) -> "Subtask":
@@ -23,5 +31,6 @@ class Subtask:
             id=raw["id"],
             text=raw["text"],
             done=raw.get("done", False),
-            status=raw.get("status", "active"),
+            folders=list(raw.get("folders") or []),
+            claude_session_id=raw.get("claude_session_id"),
         )

@@ -1,22 +1,70 @@
 from __future__ import annotations
 
-import shlex
+import subprocess
 from datetime import date
 from pathlib import Path
 
-from textual import on
+from rich.table import Table
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Input, Label, ListView
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Header, Label, ListView, Static
 
 import launcher
-from forms import SubtaskForm, TodoForm
-from parsing import next_occurrence
+from forms import NewFolderForm, SubtaskForm, TodoForm
 from row import Row
-from store import DATA_PATH, Store
+from store import Store
 from subtask import Subtask
 from todo_item import Todo
 from todo_row import TodoRow
+
+
+TODO_LIST_ROOT = Path.home() / "TodoList"
+
+
+HELP_ENTRIES = [
+    ("a", "Add a new todo (today only)"),
+    ("s", "Add a subtask under the selected todo"),
+    ("e", "Edit the selected todo or subtask"),
+    ("c", "Open Claude session for the selected row (tmux)"),
+    ("space / enter", "Toggle done on the selected row"),
+    ("d", "Delete the selected todo or subtask"),
+    ("← / h", "Previous day"),
+    ("→ / l", "Next day"),
+    ("t", "Jump to today"),
+    ("?", "Show this help"),
+    ("q", "Quit"),
+]
+
+
+class HelpScreen(ModalScreen[None]):
+    CSS = """
+    HelpScreen { align: center middle; }
+    #card {
+        width: 56; height: auto; padding: 1 2;
+        background: $panel; border: round $primary;
+    }
+    #card .title { color: $accent; text-style: bold; padding-bottom: 1; }
+    #card .hint { color: $text-muted; padding-top: 1; }
+    """
+
+    BINDINGS = [("escape,question_mark,q", "dismiss", "Close")]
+
+    def compose(self) -> ComposeResult:
+        table = Table.grid(padding=(0, 2))
+        table.add_column(no_wrap=True, style="bold")
+        table.add_column(overflow="fold")
+        for key, description in HELP_ENTRIES:
+            table.add_row(key, description)
+        with Vertical(id="card"):
+            yield Static("Keys", classes="title")
+            yield Static(table)
+            yield Static("esc / ? / q to close", classes="hint")
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
 
 
 class TodoApp(App):
@@ -25,22 +73,21 @@ class TodoApp(App):
     #title { padding: 0 1; color: $accent; text-style: bold; }
     #stats { padding: 0 1; color: $text-muted; }
     ListView { height: 1fr; border: round $primary; padding: 0 1; }
-    #new { dock: bottom; display: none; }
-    #new.visible { display: block; }
     """
 
     BINDINGS = [
-        Binding("a", "add", "Add"),
-        Binding("s", "add_sub", "+Subtask"),
-        Binding("e", "edit", "Edit"),
-        Binding("space", "toggle", "Toggle"),
+        Binding("a", "add", "Add", show=False),
+        Binding("s", "add_sub", "+Subtask", show=False),
+        Binding("e", "edit", "Edit", show=False),
+        Binding("space", "toggle", "Toggle", show=False),
         Binding("enter", "toggle", "Toggle", show=False),
-        Binding("d", "delete", "Delete"),
-        Binding("c", "claude", "Claude"),
-        Binding("left,h", "prev_day", "← Day"),
-        Binding("right,l", "next_day", "Day →"),
-        Binding("t", "today", "Today"),
-        Binding("q", "quit", "Quit"),
+        Binding("d", "delete", "Delete", show=False),
+        Binding("c", "claude", "Claude", show=False),
+        Binding("left,h", "prev_day", "← Day", show=False),
+        Binding("right,l", "next_day", "Day →", show=False),
+        Binding("t", "today", "Today", show=False),
+        Binding("q", "quit", "Quit", show=False),
+        Binding("question_mark", "help", "? Help"),
     ]
 
     def __init__(self) -> None:
@@ -50,52 +97,70 @@ class TodoApp(App):
         self.store.save()
         self.current_date = date.today().isoformat()
         self._rows: list[Row] = []
-        # Inline input is only used for the score: flow now.
-        self._input_mode: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Label("", id="title")
         yield Label("", id="stats")
         yield ListView(id="list")
-        yield Input(id="new")
         yield Footer()
 
     def on_mount(self) -> None:
         self.refresh_list()
 
+    # ------------------------------------------------------------------ helpers
+
     def _viewing_today(self) -> bool:
         return self.current_date == date.today().isoformat()
 
-    def _flatten(self, todos: list[Todo]) -> list[Row]:
+    @staticmethod
+    def _flatten(todos: list[Todo]) -> list[Row]:
         rows: list[Row] = []
-        for t in todos:
-            rows.append(Row(parent=t, sub=None))
-            for s in t.subtasks:
-                rows.append(Row(parent=t, sub=s))
+        for todo in todos:
+            rows.append(Row(parent=todo, sub=None))
+            for subtask in todo.subtasks:
+                rows.append(Row(parent=todo, sub=subtask))
         return rows
 
+    def _selected_row(self) -> Row | None:
+        list_view = self.query_one("#list", ListView)
+        if list_view.index is None or not self._rows:
+            return None
+        return self._rows[list_view.index]
+
+    def _save_and_refresh(self) -> None:
+        self.store.save()
+        self.refresh_list()
+
+    # ------------------------------------------------------------------ view
+
     def refresh_list(self) -> None:
-        lv = self.query_one("#list", ListView)
-        idx = lv.index or 0
-        lv.clear()
-        self._rows = self._flatten(self.store.by_date(self.current_date))
-        for r in self._rows:
-            lv.append(TodoRow(r))
-        if self._rows:
-            lv.index = min(idx, len(self._rows) - 1)
-
-        d = date.fromisoformat(self.current_date)
-        suffix = "  [dim](today)[/]" if self._viewing_today() else ""
-        self.query_one("#title", Label).update(f"{d.strftime('%A, %B %d, %Y')}{suffix}")
-
         parents = self.store.by_date(self.current_date)
-        done = sum(1 for t in parents if t.done)
-        total_score = sum(t.score for t in parents if t.score is not None)
-        max_score = sum(t.max_score for t in parents if t.max_score is not None)
-        score_chunk = f"   score {total_score}/{max_score}" if max_score else ""
+        self._rows = self._flatten(parents)
+        self._render_rows()
+        self._render_title()
+        self._render_stats(parents)
+
+    def _render_rows(self) -> None:
+        list_view = self.query_one("#list", ListView)
+        previous_index = list_view.index or 0
+        list_view.clear()
+        for row in self._rows:
+            list_view.append(TodoRow(row))
+        if self._rows:
+            list_view.index = min(previous_index, len(self._rows) - 1)
+
+    def _render_title(self) -> None:
+        viewed = date.fromisoformat(self.current_date)
+        suffix = "  [dim](today)[/]" if self._viewing_today() else ""
+        self.query_one("#title", Label).update(
+            f"{viewed.strftime('%A, %B %d, %Y')}{suffix}"
+        )
+
+    def _render_stats(self, parents: list[Todo]) -> None:
+        done = sum(1 for todo in parents if todo.done)
         self.query_one("#stats", Label).update(
-            f"{done}/{len(parents)} done{score_chunk}   {self._nav_hint()}"
+            f"{done}/{len(parents)} done   {self._nav_hint()}"
         )
 
     def _nav_hint(self) -> str:
@@ -105,42 +170,34 @@ class TodoApp(App):
         right = f"{dates[i+1]} [dim]→[/]" if i < len(dates) - 1 else "[dim]end   [/]"
         return f"{left}   {right}"
 
-    def _open_input(self, placeholder: str, mode: str) -> None:
-        self._input_mode = mode
-        inp = self.query_one("#new", Input)
-        inp.placeholder = placeholder
-        inp.add_class("visible")
-        inp.focus()
+    # ------------------------------------------------------------------ completion
 
-    def _close_input(self) -> None:
-        inp = self.query_one("#new", Input)
-        inp.value = ""
-        inp.remove_class("visible")
-        self._input_mode = None
-        self.query_one("#list", ListView).focus()
+    def _complete_parent(self, todo: Todo) -> None:
+        todo.done = True
+        todo.date = date.today().isoformat()
+
+    def _uncomplete_parent(self, todo: Todo) -> None:
+        todo.done = False
+        todo.date = date.today().isoformat()
+
+    # ------------------------------------------------------------------ actions: add / edit
 
     def action_add(self) -> None:
         if not self._viewing_today():
             self.notify("Switch to today (t) to add.", severity="warning")
             return
 
-        def done(result: dict | None) -> None:
+        def on_save(result: dict | None) -> None:
             if result is None:
                 return
             self.store.todos.append(Todo.new(
                 result["text"],
-                repeat=result["repeat"],
-                max_score=result["max_score"],
-                folder=result["folder"],
-                depends_on=result["depends_on"],
+                folders=result["folders"],
+                claude_session_id=result["claude_session_id"],
             ))
-            self.store.save()
-            self.refresh_list()
+            self._save_and_refresh()
 
-        self.push_screen(
-            TodoForm(title="New todo", candidates=self._dependency_candidates(None)),
-            done,
-        )
+        self.push_screen(TodoForm(), on_save)
 
     def action_add_sub(self) -> None:
         if not self._viewing_today():
@@ -152,14 +209,17 @@ class TodoApp(App):
             return
         parent = row.parent
 
-        def done(text: str | None) -> None:
-            if not text:
+        def on_save(result: dict | None) -> None:
+            if result is None:
                 return
-            parent.subtasks.append(Subtask.new(text))
-            self.store.save()
-            self.refresh_list()
+            parent.subtasks.append(Subtask.new(
+                result["text"],
+                folders=result["folders"],
+                claude_session_id=result["claude_session_id"],
+            ))
+            self._save_and_refresh()
 
-        self.push_screen(SubtaskForm(title=f"Subtask of: {parent.text}"), done)
+        self.push_screen(SubtaskForm(), on_save)
 
     def action_edit(self) -> None:
         row = self._selected_row()
@@ -171,254 +231,168 @@ class TodoApp(App):
         else:
             self._edit_subtask(row.sub)
 
-    def _edit_parent(self, t: Todo) -> None:
+    def _edit_parent(self, todo: Todo) -> None:
         initial = {
-            "text": t.text,
-            "max_score": t.max_score,
-            "repeat": t.repeat,
-            "folder": t.folder,
-            "depends_on": t.depends_on,
+            "text": todo.text,
+            "folders": todo.folders,
+            "claude_session_id": todo.claude_session_id,
         }
 
-        def done(result: dict | None) -> None:
+        def on_save(result: dict | None) -> None:
             if result is None:
                 return
-            t.text = result["text"]
-            t.max_score = result["max_score"]
-            if t.max_score is None:
-                t.score = None
-            t.repeat = result["repeat"]
-            t.depends_on = result["depends_on"]
-            new_folder = result["folder"]
-            if new_folder != t.folder:
-                t.folder = new_folder
-                if new_folder is None:
-                    t.claude_window = None
-            self.store.save()
-            self.refresh_list()
+            todo.text = result["text"]
+            todo.folders = result["folders"]
+            todo.claude_session_id = result["claude_session_id"]
+            self._save_and_refresh()
 
-        self.push_screen(
-            TodoForm(
-                title=f"Edit: {t.text}",
-                initial=initial,
-                candidates=self._dependency_candidates(t.lineage_id),
-            ),
-            done,
-        )
+        self.push_screen(TodoForm(initial=initial), on_save)
 
-    def _dependency_candidates(self, exclude_lineage: str | None) -> list[tuple[str, str]]:
-        """Distinct (label, lineage_id) pairs from todos in view, minus self."""
-        seen: dict[str, str] = {}
-        for t in self.store.by_date(self.current_date):
-            if t.lineage_id == exclude_lineage:
-                continue
-            seen.setdefault(t.lineage_id, t.text)
-        return [(text, lineage) for lineage, text in seen.items()]
+    def _edit_subtask(self, subtask: Subtask) -> None:
+        initial = {
+            "text": subtask.text,
+            "folders": subtask.folders,
+            "claude_session_id": subtask.claude_session_id,
+        }
 
-    def _edit_subtask(self, s: Subtask) -> None:
-        def done(text: str | None) -> None:
-            if not text:
+        def on_save(result: dict | None) -> None:
+            if result is None:
                 return
-            s.text = text
-            self.store.save()
-            self.refresh_list()
+            subtask.text = result["text"]
+            subtask.folders = result["folders"]
+            subtask.claude_session_id = result["claude_session_id"]
+            self._save_and_refresh()
 
-        self.push_screen(SubtaskForm(title="Edit subtask", initial_text=s.text), done)
+        self.push_screen(SubtaskForm(initial=initial), on_save)
 
-    def action_claude(self) -> None:
-        row = self._selected_row()
-        if row is None:
-            return
-        project = row.parent
-        if not project.folder:
-            self.notify("Attach a folder first (edit with e) to use Claude here.", severity="warning")
-            return
-        if not Path(project.folder).is_dir():
-            self.notify(f"Folder no longer exists: {project.folder}", severity="error")
-            return
-        if row.sub is None:
-            self._launch_main_session(project)
-        else:
-            self._launch_subtask_session(project, row.sub)
-
-    def _launch_main_session(self, project: Todo) -> None:
-        window = project.claude_window or f"todo-{project.id}"
-        prompt = (
-            f"This is the design session for the coding project {project.text!r}. "
-            "You are running in the project's own folder. Work with me to: "
-            "(1) plan the build as concrete, ordered steps; and "
-            "(2) create and keep updating a CLAUDE.md in this folder that "
-            "captures the architecture, conventions, and plan — later Claude "
-            "sessions build the individual steps in this same folder and rely "
-            "on that CLAUDE.md for guidance. "
-            f"The todo-tui data file is {DATA_PATH}; this project is the todo "
-            f'with id "{project.id}". As we agree on a step, append it to that '
-            'todo\'s "subtasks" list as {"id": <8 hex chars>, "text": <step>, '
-            '"done": false, "status": "proposed"}, so I can curate it in the TUI.'
-        )
-        try:
-            launcher.open_session(
-                project.folder, "claude " + shlex.quote(prompt),
-                window_name=window, reuse=True,
-            )
-        except RuntimeError as e:
-            self.notify(str(e), severity="error")
-            return
-        project.claude_window = window
-        self.store.save()
-        self.refresh_list()
-        self.notify(f"Design session: {project.text}")
-
-    def _launch_subtask_session(self, project: Todo, sub: Subtask) -> None:
-        siblings = [s.text for s in project.subtasks if s.id != sub.id]
-        context = f" Other planned steps: {'; '.join(siblings)}." if siblings else ""
-        prompt = (
-            f"You're implementing one step of the project {project.text!r}, in "
-            f"the folder {project.folder}. The step to do: {sub.text}.{context}"
-        )
-        try:
-            launcher.open_session(project.folder, "claude " + shlex.quote(prompt))
-        except RuntimeError as e:
-            self.notify(str(e), severity="error")
-            return
-        self.notify(f"Claude on: {sub.text}")
-
-    @on(Input.Submitted, "#new")
-    def add_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        mode = self._input_mode
-        self._close_input()
-        if not text or mode is None:
-            return
-
-        if mode.startswith("score:"):
-            pid = mode.split(":", 1)[1]
-            target = next((t for t in self.store.todos if t.id == pid), None)
-            if target is None:
-                return
-            try:
-                val = int(text)
-            except ValueError:
-                self.notify("Score must be an integer.", severity="error")
-                return
-            if target.max_score is not None and not (0 <= val <= target.max_score):
-                self.notify(f"Score must be 0..{target.max_score}.", severity="error")
-                return
-            self._complete_parent(target, score=val)
-
-        self.store.save()
-        self.refresh_list()
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            inp = self.query_one("#new", Input)
-            if inp.has_class("visible"):
-                self._close_input()
-                event.stop()
-
-    def _selected_row(self) -> Row | None:
-        lv = self.query_one("#list", ListView)
-        if lv.index is None or not self._rows:
-            return None
-        return self._rows[lv.index]
-
-    def _dependency_block(self, t: Todo) -> Todo | None:
-        """If t depends on another todo for the same date, return it when it's not done."""
-        if not t.depends_on:
-            return None
-        dep = next(
-            (x for x in self.store.todos
-             if x.date == t.date and x.lineage_id == t.depends_on),
-            None,
-        )
-        if dep is not None and not dep.done:
-            return dep
-        return None
-
-    def _complete_parent(self, t: Todo, score: int | None = None) -> None:
-        """Mark parent done. Handles scoring and repeating-task spawn."""
-        today = date.today().isoformat()
-        t.done = True
-        t.date = today
-        if t.max_score is not None and score is not None:
-            t.score = score
-        if t.repeat:
-            next_d = next_occurrence(t.repeat, date.today())
-            clone = Todo.new(t.text, repeat=t.repeat, max_score=t.max_score, folder=t.folder)
-            clone.date = next_d.isoformat()
-            clone.subtasks = [Subtask.new(s.text) for s in t.subtasks]
-            clone.lineage_id = t.lineage_id
-            clone.depends_on = t.depends_on
-            self.store.todos.append(clone)
-
-    def _uncomplete_parent(self, t: Todo) -> None:
-        t.done = False
-        t.score = None
-        t.date = date.today().isoformat()
+    # ------------------------------------------------------------------ actions: toggle / delete
 
     def action_toggle(self) -> None:
         row = self._selected_row()
         if row is None:
             return
         if row.sub is None:
-            t = row.parent
-            if t.done:
-                was_remote = not self._viewing_today()
-                self._uncomplete_parent(t)
-                if was_remote:
-                    self.notify(f"Revived to today: {t.text}")
-                    self.current_date = date.today().isoformat()
-            else:
-                blocker = self._dependency_block(t)
-                if blocker is not None:
-                    self.notify(f"Finish '{blocker.text}' first.", severity="warning")
-                    return
-                if t.max_score is not None:
-                    self._open_input(f"Score for '{t.text}' (0..{t.max_score})", f"score:{t.id}")
-                    return
-                self._complete_parent(t)
+            self._toggle_parent(row.parent)
         else:
-            s = row.sub
-            parent = row.parent
-            if not s.done:
-                blocker = self._dependency_block(parent)
-                if blocker is not None:
-                    self.notify(f"Finish '{blocker.text}' first.", severity="warning")
-                    return
-            s.done = not s.done
-            all_done = parent.subtasks and all(x.done for x in parent.subtasks)
-            if all_done and not parent.done and parent.max_score is None:
-                self._complete_parent(parent)
-            elif not all_done and parent.done:
-                self._uncomplete_parent(parent)
-        self.store.save()
-        self.refresh_list()
+            self._toggle_subtask(row.parent, row.sub)
+        self._save_and_refresh()
+
+    def _toggle_parent(self, todo: Todo) -> None:
+        if todo.done:
+            was_remote = not self._viewing_today()
+            self._uncomplete_parent(todo)
+            if was_remote:
+                self.notify(f"Revived to today: {todo.text}")
+                self.current_date = date.today().isoformat()
+            return
+        self._complete_parent(todo)
+
+    def _toggle_subtask(self, parent: Todo, subtask: Subtask) -> None:
+        subtask.done = not subtask.done
+        all_done = parent.subtasks and all(s.done for s in parent.subtasks)
+        if all_done and not parent.done:
+            self._complete_parent(parent)
+        elif not all_done and parent.done:
+            self._uncomplete_parent(parent)
 
     def action_delete(self) -> None:
         row = self._selected_row()
         if row is None:
             return
         if row.sub is None:
-            self.store.todos = [x for x in self.store.todos if x.id != row.parent.id]
+            self.store.todos = [t for t in self.store.todos if t.id != row.parent.id]
         else:
             row.parent.subtasks = [s for s in row.parent.subtasks if s.id != row.sub.id]
-        self.store.save()
-        self.refresh_list()
+        self._save_and_refresh()
+
+    # ------------------------------------------------------------------ actions: navigation / help
+
+    def _step_day(self, delta: int) -> None:
+        dates = self.store.dates()
+        i = dates.index(self.current_date) + delta
+        if 0 <= i < len(dates):
+            self.current_date = dates[i]
+            self.refresh_list()
 
     def action_prev_day(self) -> None:
-        dates = self.store.dates()
-        i = dates.index(self.current_date)
-        if i > 0:
-            self.current_date = dates[i - 1]
-            self.refresh_list()
+        self._step_day(-1)
 
     def action_next_day(self) -> None:
-        dates = self.store.dates()
-        i = dates.index(self.current_date)
-        if i < len(dates) - 1:
-            self.current_date = dates[i + 1]
-            self.refresh_list()
+        self._step_day(1)
 
     def action_today(self) -> None:
         self.current_date = date.today().isoformat()
         self.refresh_list()
+
+    def action_help(self) -> None:
+        self.push_screen(HelpScreen())
+
+    # ------------------------------------------------------------------ actions: claude
+
+    def action_claude(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self.notify("Select a row first.", severity="warning")
+            return
+
+        parent = row.parent
+        subtask = row.sub
+        # Subtasks inherit folders from the parent; the session is always their own.
+        folders_owner = subtask if (subtask and subtask.folders) else parent
+        existing_folders = list(folders_owner.folders)
+        session_id = subtask.claude_session_id if subtask else parent.claude_session_id
+
+        if existing_folders:
+            self._launch_claude(existing_folders, session_id, parent, subtask)
+            return
+
+        # No folder anywhere up the chain — prompt to create one under ~/TodoList/.
+        def on_name(name: str | None) -> None:
+            if not name:
+                return
+            try:
+                new_path = self._create_todo_folder(name)
+            except OSError as e:
+                self.notify(f"Could not create folder: {e}", severity="error")
+                return
+            # Always attach the newly-created folder to the parent (subtasks inherit).
+            parent.folders.append(str(new_path))
+            self._save_and_refresh()
+            self._launch_claude(parent.folders, session_id, parent, subtask)
+
+        self.push_screen(NewFolderForm(), on_name)
+
+    @staticmethod
+    def _create_todo_folder(name: str) -> Path:
+        TODO_LIST_ROOT.mkdir(parents=True, exist_ok=True)
+        path = TODO_LIST_ROOT / name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _launch_claude(
+        self,
+        folders: list[str],
+        session_id: str | None,
+        parent: Todo,
+        subtask: Subtask | None,
+    ) -> None:
+        resolved: list[str] = []
+        for folder in folders:
+            path = Path(folder).expanduser()
+            if not path.is_dir():
+                self.notify(f"Folder does not exist: {path}", severity="error")
+                return
+            resolved.append(str(path))
+
+        owner = subtask or parent
+        try:
+            launcher.launch(
+                resolved,
+                session_id,
+                window_name=owner.text,
+                session_name=f"todo-{owner.id}",
+            )
+        except (RuntimeError, subprocess.CalledProcessError) as e:
+            self.notify(f"Launch failed: {e}", severity="error")
+            return
+        self.notify(f"Claude on: {owner.text}")
