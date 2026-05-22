@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.widgets import ListItem, Static
@@ -18,22 +16,10 @@ class TodoRow(ListItem):
         r = self.row
         if r.sub is None:
             text = escape(r.parent.text)
-            extras = []
-            if r.parent.subtasks:
-                dc = sum(1 for s in r.parent.subtasks if s.done)
-                extras.append(f"({dc}/{len(r.parent.subtasks)})")
-            if r.parent.max_score is not None:
-                sc = r.parent.score if r.parent.score is not None else "·"
-                extras.append(f"{sc}/{r.parent.max_score}")
-            if r.parent.repeat:
-                extras.append(f"↻{r.parent.repeat}")
-            if r.parent.folder:
-                extras.append(f"📁{escape(os.path.basename(r.parent.folder))}")
-            tail = "  [dim]" + " ".join(extras) + "[/]" if extras else ""
             if r.parent.done:
-                yield Static(f"[green]✔[/]  [strike dim]{text}[/]{tail}")
+                yield Static(f"[green]✔[/]  [strike dim]{text}[/]")
             else:
-                yield Static(f"[dim]○[/]  {text}{tail}")
+                yield Static(f"[dim]○[/]  {text}")
         else:
             text = escape(r.sub.text)
             if r.sub.done:

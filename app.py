@@ -10,7 +10,8 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Input, Label, ListView
 
 import launcher
-from parsing import next_occurrence, parse_input
+from forms import SubtaskForm, TodoForm
+from parsing import next_occurrence
 from row import Row
 from store import DATA_PATH, Store
 from subtask import Subtask
@@ -24,17 +25,17 @@ class TodoApp(App):
     #title { padding: 0 1; color: $accent; text-style: bold; }
     #stats { padding: 0 1; color: $text-muted; }
     ListView { height: 1fr; border: round $primary; padding: 0 1; }
-    Input { dock: bottom; display: none; }
-    Input.visible { display: block; }
+    #new { dock: bottom; display: none; }
+    #new.visible { display: block; }
     """
 
     BINDINGS = [
         Binding("a", "add", "Add"),
         Binding("s", "add_sub", "+Subtask"),
+        Binding("e", "edit", "Edit"),
         Binding("space", "toggle", "Toggle"),
         Binding("enter", "toggle", "Toggle", show=False),
         Binding("d", "delete", "Delete"),
-        Binding("f", "folder", "Folder"),
         Binding("c", "claude", "Claude"),
         Binding("left,h", "prev_day", "← Day"),
         Binding("right,l", "next_day", "Day →"),
@@ -49,7 +50,7 @@ class TodoApp(App):
         self.store.save()
         self.current_date = date.today().isoformat()
         self._rows: list[Row] = []
-        # input mode: "new" (parent), "sub:<parent_id>", "score:<parent_id>"
+        # Inline input is only used for the score: flow now.
         self._input_mode: str | None = None
 
     def compose(self) -> ComposeResult:
@@ -122,7 +123,24 @@ class TodoApp(App):
         if not self._viewing_today():
             self.notify("Switch to today (t) to add.", severity="warning")
             return
-        self._open_input("New todo… (use /N for max score, *daily *weekly *weekdays *Nd to repeat)", "new")
+
+        def done(result: dict | None) -> None:
+            if result is None:
+                return
+            self.store.todos.append(Todo.new(
+                result["text"],
+                repeat=result["repeat"],
+                max_score=result["max_score"],
+                folder=result["folder"],
+                depends_on=result["depends_on"],
+            ))
+            self.store.save()
+            self.refresh_list()
+
+        self.push_screen(
+            TodoForm(title="New todo", candidates=self._dependency_candidates(None)),
+            done,
+        )
 
     def action_add_sub(self) -> None:
         if not self._viewing_today():
@@ -132,18 +150,80 @@ class TodoApp(App):
         if row is None:
             self.notify("Select a parent todo first.", severity="warning")
             return
-        self._open_input(f"Subtask of: {row.parent.text}", f"sub:{row.parent.id}")
+        parent = row.parent
 
-    def action_folder(self) -> None:
+        def done(text: str | None) -> None:
+            if not text:
+                return
+            parent.subtasks.append(Subtask.new(text))
+            self.store.save()
+            self.refresh_list()
+
+        self.push_screen(SubtaskForm(title=f"Subtask of: {parent.text}"), done)
+
+    def action_edit(self) -> None:
         row = self._selected_row()
         if row is None:
             self.notify("Select a todo first.", severity="warning")
             return
-        if row.sub is not None:
-            self.notify("Folders attach to a todo, not a subtask.", severity="warning")
-            return
-        current = row.parent.folder or "none"
-        self._open_input(f"Project folder (now: {current}; '-' to detach)", f"folder:{row.parent.id}")
+        if row.sub is None:
+            self._edit_parent(row.parent)
+        else:
+            self._edit_subtask(row.sub)
+
+    def _edit_parent(self, t: Todo) -> None:
+        initial = {
+            "text": t.text,
+            "max_score": t.max_score,
+            "repeat": t.repeat,
+            "folder": t.folder,
+            "depends_on": t.depends_on,
+        }
+
+        def done(result: dict | None) -> None:
+            if result is None:
+                return
+            t.text = result["text"]
+            t.max_score = result["max_score"]
+            if t.max_score is None:
+                t.score = None
+            t.repeat = result["repeat"]
+            t.depends_on = result["depends_on"]
+            new_folder = result["folder"]
+            if new_folder != t.folder:
+                t.folder = new_folder
+                if new_folder is None:
+                    t.claude_window = None
+            self.store.save()
+            self.refresh_list()
+
+        self.push_screen(
+            TodoForm(
+                title=f"Edit: {t.text}",
+                initial=initial,
+                candidates=self._dependency_candidates(t.lineage_id),
+            ),
+            done,
+        )
+
+    def _dependency_candidates(self, exclude_lineage: str | None) -> list[tuple[str, str]]:
+        """Distinct (label, lineage_id) pairs from todos in view, minus self."""
+        seen: dict[str, str] = {}
+        for t in self.store.by_date(self.current_date):
+            if t.lineage_id == exclude_lineage:
+                continue
+            seen.setdefault(t.lineage_id, t.text)
+        return [(text, lineage) for lineage, text in seen.items()]
+
+    def _edit_subtask(self, s: Subtask) -> None:
+        def done(text: str | None) -> None:
+            if not text:
+                return
+            s.text = text
+            self.store.save()
+            self.refresh_list()
+
+        self.push_screen(SubtaskForm(title="Edit subtask", initial_text=s.text), done)
 
     def action_claude(self) -> None:
         row = self._selected_row()
@@ -151,7 +231,7 @@ class TodoApp(App):
             return
         project = row.parent
         if not project.folder:
-            self.notify("Attach a folder first (f) to use Claude here.", severity="warning")
+            self.notify("Attach a folder first (edit with e) to use Claude here.", severity="warning")
             return
         if not Path(project.folder).is_dir():
             self.notify(f"Folder no longer exists: {project.folder}", severity="error")
@@ -211,18 +291,7 @@ class TodoApp(App):
         if not text or mode is None:
             return
 
-        if mode == "new":
-            clean, repeat, max_score = parse_input(text)
-            if not clean:
-                return
-            self.store.todos.append(Todo.new(clean, repeat=repeat, max_score=max_score))
-        elif mode.startswith("sub:"):
-            pid = mode.split(":", 1)[1]
-            for t in self.store.todos:
-                if t.id == pid:
-                    t.subtasks.append(Subtask.new(text))
-                    break
-        elif mode.startswith("score:"):
+        if mode.startswith("score:"):
             pid = mode.split(":", 1)[1]
             target = next((t for t in self.store.todos if t.id == pid), None)
             if target is None:
@@ -236,20 +305,7 @@ class TodoApp(App):
                 self.notify(f"Score must be 0..{target.max_score}.", severity="error")
                 return
             self._complete_parent(target, score=val)
-        elif mode.startswith("folder:"):
-            pid = mode.split(":", 1)[1]
-            target = next((t for t in self.store.todos if t.id == pid), None)
-            if target is None:
-                return
-            if text == "-":
-                target.folder = None
-                target.claude_window = None
-            else:
-                p = Path(text).expanduser()
-                if not p.is_dir():
-                    self.notify(f"Not a directory: {p}", severity="error")
-                    return
-                target.folder = str(p.resolve())
+
         self.store.save()
         self.refresh_list()
 
@@ -266,6 +322,19 @@ class TodoApp(App):
             return None
         return self._rows[lv.index]
 
+    def _dependency_block(self, t: Todo) -> Todo | None:
+        """If t depends on another todo for the same date, return it when it's not done."""
+        if not t.depends_on:
+            return None
+        dep = next(
+            (x for x in self.store.todos
+             if x.date == t.date and x.lineage_id == t.depends_on),
+            None,
+        )
+        if dep is not None and not dep.done:
+            return dep
+        return None
+
     def _complete_parent(self, t: Todo, score: int | None = None) -> None:
         """Mark parent done. Handles scoring and repeating-task spawn."""
         today = date.today().isoformat()
@@ -275,9 +344,11 @@ class TodoApp(App):
             t.score = score
         if t.repeat:
             next_d = next_occurrence(t.repeat, date.today())
-            clone = Todo.new(t.text, repeat=t.repeat, max_score=t.max_score)
+            clone = Todo.new(t.text, repeat=t.repeat, max_score=t.max_score, folder=t.folder)
             clone.date = next_d.isoformat()
             clone.subtasks = [Subtask.new(s.text) for s in t.subtasks]
+            clone.lineage_id = t.lineage_id
+            clone.depends_on = t.depends_on
             self.store.todos.append(clone)
 
     def _uncomplete_parent(self, t: Todo) -> None:
@@ -298,14 +369,23 @@ class TodoApp(App):
                     self.notify(f"Revived to today: {t.text}")
                     self.current_date = date.today().isoformat()
             else:
+                blocker = self._dependency_block(t)
+                if blocker is not None:
+                    self.notify(f"Finish '{blocker.text}' first.", severity="warning")
+                    return
                 if t.max_score is not None:
                     self._open_input(f"Score for '{t.text}' (0..{t.max_score})", f"score:{t.id}")
                     return
                 self._complete_parent(t)
         else:
             s = row.sub
-            s.done = not s.done
             parent = row.parent
+            if not s.done:
+                blocker = self._dependency_block(parent)
+                if blocker is not None:
+                    self.notify(f"Finish '{blocker.text}' first.", severity="warning")
+                    return
+            s.done = not s.done
             all_done = parent.subtasks and all(x.done for x in parent.subtasks)
             if all_done and not parent.done and parent.max_score is None:
                 self._complete_parent(parent)

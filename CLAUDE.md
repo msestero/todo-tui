@@ -12,16 +12,17 @@ There is no build step, no test suite, and no linter configured. Dependencies (`
 
 ## Architecture
 
-[Textual](https://textual.textualize.io/) TUI. One class per module; `todo.py` is a thin entry point that imports and runs `TodoApp`. Modules import siblings by bare name (`from store import Store`) — this works because `todo.py` is run as a script, putting its directory on `sys.path`; there is no package/`__init__.py`. Import order, low to high: `subtask` → `todo_item` → `parsing` / `store` / `row` / `launcher` → `todo_row` → `app`.
+[Textual](https://textual.textualize.io/) TUI. One class per module; `todo.py` is a thin entry point that imports and runs `TodoApp`. Modules import siblings by bare name (`from store import Store`) — this works because `todo.py` is run as a script, putting its directory on `sys.path`; there is no package/`__init__.py`. Import order, low to high: `subtask` → `parsing` → `todo_item` → `store` / `row` / `launcher` → `todo_row` / `forms` → `app`.
 
 | File | Contents |
 |------|----------|
 | `subtask.py` | `Subtask` dataclass |
-| `todo_item.py` | `Todo` dataclass |
-| `parsing.py` | `parse_input`, `next_occurrence`, `REPEAT_RE`, `SCORE_RE` |
+| `parsing.py` | `next_occurrence`, `migrate_repeat`, `repeat_label` |
+| `todo_item.py` | `Todo` dataclass (depends on `parsing.migrate_repeat`) |
 | `store.py` | `Store`, `DATA_PATH` |
 | `row.py` | `Row` (flattened parent+subtask view model) |
 | `todo_row.py` | `TodoRow` (the `ListItem` widget) |
+| `forms.py` | `TodoForm`, `SubtaskForm` — modal `ModalScreen`s for add/edit |
 | `launcher.py` | `open_session` — tmux-aware terminal spawning |
 | `app.py` | `TodoApp` |
 
@@ -33,7 +34,7 @@ Three layers:
 - `Store.rollover()` runs once at startup: any incomplete todo dated in the past is moved to today, so nothing is ever stranded on an old day.
 - `_complete_parent()` / `_uncomplete_parent()` are the *only* correct ways to flip a parent's done state. Completing a repeating todo spawns a dated clone (with fresh subtask copies) for its next occurrence; completing a scored todo records its score. Do not set `todo.done` directly — route through these.
 
-**UI** — `TodoApp` renders the current day's todos via a `ListView`. The parent/subtask tree is flattened into a `list[Row]` (`Row` = parent + optional subtask) by `_flatten`; `ListView.index` maps back into `self._rows`. The bottom `Input` is a single reused widget driven by `self._input_mode`, a string tag that is one of `"new"`, `"sub:<parent_id>"`, `"score:<parent_id>"`, or `"folder:<parent_id>"`. `add_submitted` branches on that tag — when adding a new input flow, follow this mode-string pattern rather than adding more widgets.
+**UI** — `TodoApp` renders the current day's todos via a `ListView`. The parent/subtask tree is flattened into a `list[Row]` (`Row` = parent + optional subtask) by `_flatten`; `ListView.index` maps back into `self._rows`. Adding/editing parents and subtasks is done through modal `ModalScreen`s in `forms.py` (`TodoForm`, `SubtaskForm`) — `push_screen(form, callback)` returns a result dict or `None` to the app. The bottom docked `Input` is now used only for the `score:` flow (collecting a single integer when toggling a scored todo); `self._input_mode` is the string tag for that one flow.
 
 ## Claude integration (coding projects)
 
@@ -45,8 +46,13 @@ A `Todo` with a non-null `folder` is a *coding project*. The `c` key launches Cl
 
 ## Behaviors worth knowing before editing
 
-- **Input syntax** — `parse_input` strips inline tokens from a new todo's text: `/N` sets `max_score`, and `*daily` / `*weekly` / `*weekdays` / `*Nd` set `repeat`. Regexes are `SCORE_RE` and `REPEAT_RE`.
-- **Scored todos** don't toggle done directly — toggling opens the input in `score:` mode to collect a 0..max integer.
+- **Add/edit forms** — `a` opens `TodoForm` for a new parent; `s` opens `SubtaskForm` under the selected parent; `e` opens the appropriate edit form for the selected row. The todo form collects text, max_score, repeat, and folder in one shot; there is no inline `/N` / `*daily` syntax anymore.
+- **Repeat schema** — `Todo.repeat` is a dict (or `None`):
+  - `{"kind": "days", "days": [0..6, ...]}` (0=Mon..6=Sun)
+  - `{"kind": "cycle", "on": int≥1, "off": int≥0, "anchor": "YYYY-MM-DD"}` — period is `on+off`; the first `on` days of each period (counted from `anchor`) are scheduled.
+  Legacy string repeats from older JSON files (`"daily"`/`"weekdays"`/`"weekly"`/`"<N>d"`) are migrated by `parsing.migrate_repeat` on load. `parsing.next_occurrence(repeat, today)` returns the next scheduled date strictly after `today`. `parsing.repeat_label(repeat)` produces the short tag rendered in `TodoRow`.
+- **Editing repeat** — by design, editing a parent's repeat does **not** reschedule any already-spawned future-dated clones. Only the next spawn (after the next completion) uses the new rule.
+- **Scored todos** don't toggle done directly — toggling opens the bottom `Input` in `score:` mode to collect a 0..max integer.
 - **Subtask/parent sync** (`action_toggle`): checking the last subtask auto-completes a non-scored parent; unchecking one re-opens a completed parent.
 - **Reviving** — toggling a *done* todo while viewing a past day un-completes it, moves it to today, and jumps the view to today.
 - **Adding is today-only** — `action_add` / `action_add_sub` refuse unless `_viewing_today()`.
