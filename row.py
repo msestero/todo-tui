@@ -10,3 +10,4 @@ from todo_item import Todo
 class Row:
     parent: Todo
     sub: Subtask | None
+    collapsed: bool = False

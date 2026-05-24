@@ -42,14 +42,16 @@ def _split(target: str, orientation: str, cwd: str) -> str:
 
 def launch(
     folders: list[str],
-    claude_session_id: str | None,
+    claude_session_id: str,
+    resume: bool,
     window_name: str,
     session_name: str,
 ) -> None:
     """Open a tmux window/session for this task.
 
-    Layout: left pane runs `claude` (resumes if `claude_session_id` is given);
-    the right column has one shell per folder, stacked top-to-bottom.
+    Layout: left pane runs `claude` (with `--resume <id>` if `resume`, else
+    `--session-id <id>` to bind a freshly-generated id to a new session); the
+    right column has one shell per folder, stacked top-to-bottom.
 
     Inside tmux: creates a new window named `window_name` in the current session.
     Outside tmux: creates a detached tmux session named `session_name`
@@ -60,10 +62,8 @@ def launch(
         raise ValueError("launch requires at least one folder")
 
     primary_folder = folders[0]
-    claude_cmd = (
-        f"claude --resume {shlex.quote(claude_session_id)}"
-        if claude_session_id else "claude"
-    )
+    claude_flag = "--resume" if resume else "--session-id"
+    claude_cmd = f"claude {claude_flag} {shlex.quote(claude_session_id)}"
     # Keep the pane open after claude exits so the user can read its output.
     keep_open = f"{{ {claude_cmd}; }}; exec ${{SHELL:-bash}}"
 

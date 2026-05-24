@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import subprocess
+import uuid
 from datetime import date
 from pathlib import Path
 
 from rich.table import Table
 
+from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -29,7 +31,8 @@ HELP_ENTRIES = [
     ("s", "Add a subtask under the selected todo"),
     ("e", "Edit the selected todo or subtask"),
     ("c", "Open Claude session for the selected row (tmux)"),
-    ("space / enter", "Toggle done on the selected row"),
+    ("space", "Toggle done on the selected row"),
+    ("enter", "Hide/show subtasks"),
     ("d", "Delete the selected todo or subtask"),
     ("← / h", "Previous day"),
     ("→ / l", "Next day"),
@@ -80,7 +83,6 @@ class TodoApp(App):
         Binding("s", "add_sub", "+Subtask", show=False),
         Binding("e", "edit", "Edit", show=False),
         Binding("space", "toggle", "Toggle", show=False),
-        Binding("enter", "toggle", "Toggle", show=False),
         Binding("d", "delete", "Delete", show=False),
         Binding("c", "claude", "Claude", show=False),
         Binding("left,h", "prev_day", "← Day", show=False),
@@ -97,6 +99,7 @@ class TodoApp(App):
         self.store.save()
         self.current_date = date.today().isoformat()
         self._rows: list[Row] = []
+        self._collapsed: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -113,11 +116,13 @@ class TodoApp(App):
     def _viewing_today(self) -> bool:
         return self.current_date == date.today().isoformat()
 
-    @staticmethod
-    def _flatten(todos: list[Todo]) -> list[Row]:
+    def _flatten(self, todos: list[Todo]) -> list[Row]:
         rows: list[Row] = []
         for todo in todos:
-            rows.append(Row(parent=todo, sub=None))
+            is_collapsed = todo.id in self._collapsed and bool(todo.subtasks)
+            rows.append(Row(parent=todo, sub=None, collapsed=is_collapsed))
+            if todo.id in self._collapsed:
+                continue
             for subtask in todo.subtasks:
                 rows.append(Row(parent=todo, sub=subtask))
         return rows
@@ -327,6 +332,21 @@ class TodoApp(App):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
+    @on(ListView.Selected)
+    def _on_selected(self, event: ListView.Selected) -> None:
+        self.action_toggle_hide_subtasks()
+
+    def action_toggle_hide_subtasks(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        parent_id = row.parent.id
+        if parent_id in self._collapsed:
+            self._collapsed.discard(parent_id)
+        else:
+            self._collapsed.add(parent_id)
+        self.refresh_list()
+
     # ------------------------------------------------------------------ actions: claude
 
     def action_claude(self) -> None:
@@ -385,10 +405,20 @@ class TodoApp(App):
             resolved.append(str(path))
 
         owner = subtask or parent
+
+        # If this row doesn't yet have a session id, mint one and bind it to
+        # claude via --session-id. That way the id is known up front, no polling.
+        resume = session_id is not None
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+            owner.claude_session_id = session_id
+            self._save_and_refresh()
+
         try:
             launcher.launch(
                 resolved,
                 session_id,
+                resume=resume,
                 window_name=owner.text,
                 session_name=f"todo-{owner.id}",
             )

@@ -16,10 +16,11 @@ class TodoRow(ListItem):
         r = self.row
         if r.sub is None:
             text = escape(r.parent.text)
+            suffix = f"  [dim cyan]({len(r.parent.subtasks)} hidden)[/]" if r.collapsed else ""
             if r.parent.done:
-                yield Static(f"[green]✔[/]  [strike dim]{text}[/]")
+                yield Static(f"[green]✔[/]  [strike dim]{text}[/]{suffix}")
             else:
-                yield Static(f"[dim]○[/]  {text}")
+                yield Static(f"[dim]○[/]  {text}{suffix}")
         else:
             text = escape(r.sub.text)
             if r.sub.done:
