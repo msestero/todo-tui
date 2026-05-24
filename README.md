@@ -33,13 +33,16 @@ todo
 | `e` | Edit the selected todo or subtask |
 | `c` | Open a tmux Claude session for the selected row |
 | `space` | Toggle done on the selected row |
-| `enter` | Collapse/expand subtasks of the selected parent |
+| `enter` | Collapse/expand subtasks (task list) — open/select week or day (sidebar) |
 | `d` | Delete the selected todo or subtask |
-| `← / h` | Previous day |
-| `→ / l` | Next day |
-| `t` | Jump to today |
+| `← / h` | Focus the week sidebar |
+| `→ / l` | Focus the task list |
+| `w` | Focus the week sidebar |
+| `t` | Jump to today (re-opens today's week) |
 | `?` | Help |
 | `q` | Quit |
+
+The left-side sidebar lists every week that has todos (oldest at the top). `enter` on a week expands it inline into 7 day rows; only one week is open at a time. `enter` on a day jumps the task list to that day and returns focus there.
 
 Inside the add/edit form: `up`/`down` to move between fields, `enter` saves, `esc` cancels.
 

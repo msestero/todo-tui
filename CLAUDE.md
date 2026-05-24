@@ -37,7 +37,11 @@ UI-only changes that genuinely have no testable logic (pure CSS, label tweaks) d
 | `src/todo_item.py` | `Todo` dataclass |
 | `src/store.py` | `Store`, `DATA_PATH` |
 | `src/row.py` | `Row` (flattened parent+subtask view model) |
+| `src/view_model.py` | `ViewState`, `build_rows` — pure flatten of todos→rows |
 | `src/todo_row.py` | `TodoRow` (the `ListItem` widget) |
+| `src/week_view.py` | `Week`, `WeekViewState`, `build_week_rows` — sidebar view-model |
+| `src/week_row_widget.py` | `WeekRowWidget` (sidebar `ListItem`) |
+| `src/claude_context.py` | `build_context` — renders todo+subtasks to markdown for claude |
 | `src/forms.py` | `TodoForm`, `SubtaskForm`, `NewFolderForm` — modal `ModalScreen`s |
 | `src/launcher.py` | `launch(folders, session_id, session_name)` — tmux pane layout |
 | `src/app.py` | `TodoApp` |
@@ -51,7 +55,7 @@ Three layers:
 - `Store.rollover()` runs once at startup: any incomplete todo dated in the past is moved to today, so nothing is ever stranded on an old day.
 - `_complete_parent()` / `_uncomplete_parent()` are the *only* correct ways to flip a parent's done state. Do not set `todo.done` directly — route through these.
 
-**UI** — `TodoApp` renders the current day's todos via a `ListView`. The parent/subtask tree is flattened into a `list[Row]` (`Row` = parent + optional subtask) by `_flatten`; `ListView.index` maps back into `self._rows`. Adding/editing parents and subtasks is done through modal `ModalScreen`s in `forms.py`: `TodoForm` and `SubtaskForm` are both thin subclasses of `_ItemForm` (same shape, different placeholder). The form dismisses with `dict | None` — `{"text": str, "folders": list[str], "claude_session_id": str | None}` on save, `None` on cancel.
+**UI** — `TodoApp` lays out a horizontal split: a `#sidebar` `ListView` (weeks, oldest at top, one open at a time) on the left and a `#list` `ListView` for the selected day's todos on the right. The parent/subtask tree is flattened into a `list[Row]` (`Row` = parent + optional subtask) by `view_model.build_rows`; `ListView.index` maps back into `self._rows`. The sidebar uses `week_view.build_week_rows` over `store.dates()`. `ListView.Selected` is dispatched by `event.list_view.id` — `#sidebar` enter toggles a week's expansion or jumps `current_date` to the picked day, `#list` enter toggles subtask collapse. `←/h` focuses the sidebar, `→/l` focuses the list; `t` jumps to today and reopens today's week. Adding/editing parents and subtasks is done through modal `ModalScreen`s in `forms.py`: `TodoForm` and `SubtaskForm` are both thin subclasses of `_ItemForm` (same shape, different placeholder). The form dismisses with `dict | None` — `{"text": str, "folders": list[str], "claude_session_id": str | None}` on save, `None` on cancel.
 
 The footer is bare — only `? Help` is shown. Pressing `?` opens `HelpScreen` (in `app.py`), which lists every binding sourced from the `HELP_ENTRIES` table at the top of the file.
 
