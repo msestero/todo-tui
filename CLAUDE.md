@@ -13,18 +13,19 @@ There is no build step or linter configured. Runtime dependencies (`textual`, `r
 
 ## Architecture
 
-[Textual](https://textual.textualize.io/) TUI. One class per module; `todo.py` is a thin entry point that imports and runs `TodoApp`. Modules import siblings by bare name (`from store import Store`) — this works because `todo.py` is run as a script, putting its directory on `sys.path`; there is no package/`__init__.py`. Import order, low to high: `subtask` → `todo_item` → `store` / `row` → `todo_row` / `forms` → `app`.
+[Textual](https://textual.textualize.io/) TUI. All source lives in `src/`; one class per module; `src/todo.py` is a thin entry point that imports and runs `TodoApp`. Modules import siblings by bare name (`from store import Store`) — this works because `src/todo.py` is run as a script, putting `src/` on `sys.path`; there is no package/`__init__.py`. Tests add `src/` to `sys.path` via `tests/conftest.py`. Import order, low to high: `subtask` → `todo_item` → `store` / `row` → `todo_row` / `forms` → `app`.
 
 | File | Contents |
 |------|----------|
-| `subtask.py` | `Subtask` dataclass |
-| `todo_item.py` | `Todo` dataclass |
-| `store.py` | `Store`, `DATA_PATH` |
-| `row.py` | `Row` (flattened parent+subtask view model) |
-| `todo_row.py` | `TodoRow` (the `ListItem` widget) |
-| `forms.py` | `TodoForm`, `SubtaskForm`, `NewFolderForm` — modal `ModalScreen`s |
-| `launcher.py` | `launch(folders, session_id, session_name)` — tmux pane layout |
-| `app.py` | `TodoApp` |
+| `src/subtask.py` | `Subtask` dataclass |
+| `src/todo_item.py` | `Todo` dataclass |
+| `src/store.py` | `Store`, `DATA_PATH` |
+| `src/row.py` | `Row` (flattened parent+subtask view model) |
+| `src/todo_row.py` | `TodoRow` (the `ListItem` widget) |
+| `src/forms.py` | `TodoForm`, `SubtaskForm`, `NewFolderForm` — modal `ModalScreen`s |
+| `src/launcher.py` | `launch(folders, session_id, session_name)` — tmux pane layout |
+| `src/app.py` | `TodoApp` |
+| `src/todo.py` | Entry point |
 
 Three layers:
 

@@ -40,9 +40,10 @@ if [[ "$MODE" == "binary" ]]; then
     "$VENV_DIR/bin/pyinstaller" \
         --onefile \
         --name todo \
+        --paths src \
         --collect-all textual \
         --collect-all rich \
-        todo.py > /dev/null
+        src/todo.py > /dev/null
     popd > /dev/null
 
     echo "==> Copying binary to $TARGET_PATH"
