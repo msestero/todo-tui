@@ -142,13 +142,18 @@ class TodoApp(App):
 
     # ------------------------------------------------------------------ view
 
-    def refresh_list(self) -> None:
+    def refresh_list(self, *, sidebar: bool = True) -> None:
+        """Rebuild the todo list. Pass `sidebar=False` when the caller knows
+        the sidebar's contents can't have changed (e.g. a collapse toggle) —
+        skipping the sidebar rebuild avoids visible flicker."""
         parents = self.store.by_date(self.current_date)
         self._rows = build_rows(parents, self._view_state)
-        self._render_rows()
-        self._render_sidebar()
-        self._render_title()
-        self._render_stats(parents)
+        with self.batch_update():
+            self._render_rows()
+            if sidebar:
+                self._render_sidebar()
+            self._render_title()
+            self._render_stats(parents)
 
     def _render_rows(self) -> None:
         list_view = self.query_one("#list", ListView)
@@ -343,7 +348,7 @@ class TodoApp(App):
             collapsed.discard(parent_id)
         else:
             collapsed.add(parent_id)
-        self.refresh_list()
+        self.refresh_list(sidebar=False)
 
     def action_toggle_hide_done(self) -> None:
         """Toggle hiding *done* subtasks for the parent owning the selected row.
@@ -357,7 +362,7 @@ class TodoApp(App):
             hide.discard(parent_id)
         else:
             hide.add(parent_id)
-        self.refresh_list()
+        self.refresh_list(sidebar=False)
 
     # ------------------------------------------------------------------ actions: claude
 
