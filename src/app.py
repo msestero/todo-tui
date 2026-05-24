@@ -463,6 +463,13 @@ class TodoApp(App):
             resolved.append(str(path))
 
         owner = subtask or parent
+        window_name = owner.text
+        session_name = f"todo-{owner.id}"
+
+        # Reuse an existing tmux window/session for this row if it's still
+        # around — switching focus instead of spawning a duplicate.
+        if session_id is not None and self._switch_to_existing(window_name, session_name, owner):
+            return
 
         # If this row doesn't yet have a session id, mint one and bind it to
         # claude via --session-id. That way the id is known up front, no polling.
@@ -477,11 +484,34 @@ class TodoApp(App):
                 resolved,
                 session_id,
                 resume=resume,
-                window_name=owner.text,
-                session_name=f"todo-{owner.id}",
+                window_name=window_name,
+                session_name=session_name,
                 initial_context=build_context(parent),
             )
         except (RuntimeError, subprocess.CalledProcessError) as e:
             self.notify(f"Launch failed: {e}", severity="error")
             return
         self.notify(f"Claude on: {owner.text}")
+
+    def _switch_to_existing(
+        self, window_name: str, session_name: str, owner: Todo | Subtask
+    ) -> bool:
+        """If there's already a tmux window (inside tmux) or session (outside
+        tmux) for this row, switch focus to it and return True. Otherwise
+        return False so the caller falls through to a fresh launch."""
+        if launcher.in_tmux():
+            wid = launcher.find_window(window_name)
+            if wid is None:
+                return False
+            launcher.select_window(wid)
+            self.notify(f"Switched to: {owner.text}")
+            return True
+        if not launcher.has_session(session_name):
+            return False
+        try:
+            launcher.attach_session(session_name)
+        except RuntimeError as e:
+            self.notify(f"Could not attach: {e}", severity="error")
+            return True
+        self.notify(f"Attached: {owner.text}")
+        return True
