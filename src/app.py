@@ -10,11 +10,12 @@ from rich.table import Table
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Label, ListView, Static
 
 import launcher
+from claude_context import build_context
 from forms import ItemFormResult, NewFolderForm, SubtaskForm, TodoForm
 from row import Row
 from store import Store
@@ -22,6 +23,8 @@ from subtask import Subtask
 from todo_item import Todo
 from todo_row import TodoRow
 from view_model import ViewState, build_rows
+from week_row_widget import WeekRowWidget
+from week_view import WeekRow, WeekViewState, build_week_rows, week_of
 
 TODO_LIST_ROOT = Path.home() / "TodoList"
 
@@ -32,10 +35,10 @@ HELP_ENTRIES = [
     ("e", "Edit the selected todo or subtask"),
     ("c", "Open Claude session for the selected row (tmux)"),
     ("space", "Toggle done on the selected row"),
-    ("enter", "Hide/show subtasks"),
+    ("enter", "Hide/show subtasks (list) or pick week/day (sidebar)"),
     ("d", "Delete the selected todo or subtask"),
-    ("← / h", "Previous day"),
-    ("→ / l", "Next day"),
+    ("w", "Focus the week sidebar"),
+    ("tab", "Cycle focus between sidebar and list"),
     ("t", "Jump to today"),
     ("?", "Show this help"),
     ("q", "Quit"),
@@ -75,7 +78,9 @@ class TodoApp(App):
     Screen { layout: vertical; }
     #title { padding: 0 1; color: $accent; text-style: bold; }
     #stats { padding: 0 1; color: $text-muted; }
-    ListView { height: 1fr; border: round $primary; padding: 0 1; }
+    #main { layout: horizontal; height: 1fr; }
+    #sidebar { width: 22; border: round $primary; padding: 0 1; }
+    #list { width: 1fr; border: round $primary; padding: 0 1; }
     """
 
     BINDINGS = [
@@ -85,8 +90,7 @@ class TodoApp(App):
         Binding("space", "toggle", "Toggle", show=False),
         Binding("d", "delete", "Delete", show=False),
         Binding("c", "claude", "Claude", show=False),
-        Binding("left,h", "prev_day", "← Day", show=False),
-        Binding("right,l", "next_day", "Day →", show=False),
+        Binding("w", "focus_sidebar", "Weeks", show=False),
         Binding("t", "today", "Today", show=False),
         Binding("q", "quit", "Quit", show=False),
         Binding("question_mark", "help", "? Help"),
@@ -99,17 +103,22 @@ class TodoApp(App):
         self.store.save()
         self.current_date = date.today().isoformat()
         self._rows: list[Row] = []
+        self._week_rows: list[WeekRow] = []
         self._view_state = ViewState()
+        self._week_state = WeekViewState(expanded_week=week_of(date.today()).key)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Label("", id="title")
         yield Label("", id="stats")
-        yield ListView(id="list")
+        with Horizontal(id="main"):
+            yield ListView(id="sidebar")
+            yield ListView(id="list")
         yield Footer()
 
     def on_mount(self) -> None:
         self.refresh_list()
+        self.query_one("#list", ListView).focus()
 
     # ------------------------------------------------------------------ helpers
 
@@ -132,6 +141,7 @@ class TodoApp(App):
         parents = self.store.by_date(self.current_date)
         self._rows = build_rows(parents, self._view_state)
         self._render_rows()
+        self._render_sidebar()
         self._render_title()
         self._render_stats(parents)
 
@@ -144,6 +154,29 @@ class TodoApp(App):
         if self._rows:
             list_view.index = min(previous_index, len(self._rows) - 1)
 
+    def _render_sidebar(self) -> None:
+        self._week_rows = build_week_rows(self.store.dates(), self._week_state)
+        sidebar = self.query_one("#sidebar", ListView)
+        sidebar.clear()
+        for row in self._week_rows:
+            sidebar.append(WeekRowWidget(row))
+        # Keep the highlight on the row matching the currently-viewed day if it's
+        # visible (i.e. the week is open); otherwise highlight that day's week header.
+        target = self._sidebar_index_for_current_date()
+        if target is not None:
+            sidebar.index = target
+
+    def _sidebar_index_for_current_date(self) -> int | None:
+        viewed = date.fromisoformat(self.current_date)
+        viewed_week_key = week_of(viewed).key
+        header_index: int | None = None
+        for i, wr in enumerate(self._week_rows):
+            if wr.day == viewed:
+                return i
+            if wr.day is None and wr.week.key == viewed_week_key:
+                header_index = i
+        return header_index
+
     def _render_title(self) -> None:
         viewed = date.fromisoformat(self.current_date)
         suffix = "  [dim](today)[/]" if self._viewing_today() else ""
@@ -151,14 +184,7 @@ class TodoApp(App):
 
     def _render_stats(self, parents: list[Todo]) -> None:
         done = sum(1 for todo in parents if todo.done)
-        self.query_one("#stats", Label).update(f"{done}/{len(parents)} done   {self._nav_hint()}")
-
-    def _nav_hint(self) -> str:
-        dates = self.store.dates()
-        i = dates.index(self.current_date)
-        left = f"[dim]←[/] {dates[i - 1]}" if i > 0 else "[dim]   start[/]"
-        right = f"{dates[i + 1]} [dim]→[/]" if i < len(dates) - 1 else "[dim]end   [/]"
-        return f"{left}   {right}"
+        self.query_one("#stats", Label).update(f"{done}/{len(parents)} done")
 
     # ------------------------------------------------------------------ actions: add / edit
 
@@ -264,29 +290,40 @@ class TodoApp(App):
 
     # ------------------------------------------------------------------ actions: navigation / help
 
-    def _step_day(self, delta: int) -> None:
-        dates = self.store.dates()
-        i = dates.index(self.current_date) + delta
-        if 0 <= i < len(dates):
-            self.current_date = dates[i]
-            self.refresh_list()
-
-    def action_prev_day(self) -> None:
-        self._step_day(-1)
-
-    def action_next_day(self) -> None:
-        self._step_day(1)
-
     def action_today(self) -> None:
         self.current_date = date.today().isoformat()
+        self._week_state.expanded_week = week_of(date.today()).key
         self.refresh_list()
+
+    def action_focus_sidebar(self) -> None:
+        self.query_one("#sidebar", ListView).focus()
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
     @on(ListView.Selected)
     def _on_selected(self, event: ListView.Selected) -> None:
-        self.action_toggle_hide_subtasks()
+        if event.list_view.id == "sidebar":
+            self._on_sidebar_select()
+        else:
+            self.action_toggle_hide_subtasks()
+
+    def _on_sidebar_select(self) -> None:
+        sidebar = self.query_one("#sidebar", ListView)
+        if sidebar.index is None or not self._week_rows:
+            return
+        wr = self._week_rows[sidebar.index]
+        if wr.day is None:
+            # Toggle this week. Opening a different one auto-closes the previous.
+            self._week_state.expanded_week = (
+                None if self._week_state.expanded_week == wr.week.key else wr.week.key
+            )
+            self.refresh_list()
+            return
+        # Day selected — jump to it and focus the todo list.
+        self.current_date = wr.day.isoformat()
+        self.refresh_list()
+        self.query_one("#list", ListView).focus()
 
     def action_toggle_hide_subtasks(self) -> None:
         row = self._selected_row()
@@ -374,6 +411,7 @@ class TodoApp(App):
                 resume=resume,
                 window_name=owner.text,
                 session_name=f"todo-{owner.id}",
+                initial_context=build_context(parent),
             )
         except (RuntimeError, subprocess.CalledProcessError) as e:
             self.notify(f"Launch failed: {e}", severity="error")

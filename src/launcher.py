@@ -95,11 +95,18 @@ def launch(
     resume: bool,
     window_name: str,
     session_name: str,
+    initial_context: str | None = None,
 ) -> None:
     """Open a fresh tmux window/session for this task.
 
     Layout: left pane runs `claude` (`--resume <id>` if `resume`, else
     `--session-id <id>`); the right column has one shell per folder.
+
+    `initial_context`, when set, is appended to claude's system prompt so the
+    task/subtask info is available throughout the session without consuming a
+    user turn. Passed on every launch (fresh and resume) since
+    `--append-system-prompt` is per-invocation — re-injecting reflects the
+    live state of the todo rather than freezing it at first launch.
 
     Inside tmux: creates a new window in the current session.
     Outside tmux: creates a detached session named `session_name` and spawns a
@@ -109,7 +116,7 @@ def launch(
         raise ValueError("launch requires at least one folder")
 
     primary = folders[0]
-    claude_cmd = _build_claude_cmd(claude_session_id, resume)
+    claude_cmd = _build_claude_cmd(claude_session_id, resume, initial_context)
 
     if in_tmux():
         target = _create_window_here(window_name, primary, claude_cmd)
@@ -126,9 +133,12 @@ def launch(
 # ---------------------------------------------------------------- launch helpers
 
 
-def _build_claude_cmd(session_id: str, resume: bool) -> str:
+def _build_claude_cmd(session_id: str, resume: bool, initial_context: str | None = None) -> str:
     flag = "--resume" if resume else "--session-id"
-    cmd = f"claude {flag} {shlex.quote(session_id)}"
+    parts = ["claude", flag, shlex.quote(session_id)]
+    if initial_context:
+        parts += ["--append-system-prompt", shlex.quote(initial_context)]
+    cmd = " ".join(parts)
     # Keep the pane open after claude exits so the user can read its output.
     return f"{{ {cmd}; }}; exec ${{SHELL:-bash}}"
 
