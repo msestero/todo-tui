@@ -75,6 +75,41 @@ class HelpScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+def _diff_apply(list_view, rows, *, key_of, make) -> None:
+    """Reconcile `list_view`'s children to match `rows` with the minimum number
+    of widget mounts/unmounts.
+
+    Each existing child carries a `.key` and a `.update_for(row)` method. We
+    walk `rows` and the current children in lockstep:
+    - same key at the same position → update content in place (no remount).
+    - desired row not present further down current → insert before this position.
+    - current child not present further down desired → remove it.
+
+    The result is that unaffected rows are never touched, which is what
+    eliminates the per-row redraw flicker on a hide/collapse toggle.
+    """
+    desired_keys = [key_of(r) for r in rows]
+    current = [c for c in list_view.children if hasattr(c, "key")]
+    current_keys = [c.key for c in current]
+
+    i = j = 0
+    while i < len(current) and j < len(desired_keys):
+        if current[i].key == desired_keys[j]:
+            current[i].update_for(rows[j])
+            i += 1
+            j += 1
+        elif desired_keys[j] not in current_keys[i:]:
+            list_view.mount(make(rows[j]), before=current[i])
+            j += 1
+        else:
+            current[i].remove()
+            i += 1
+    for stale in current[i:]:
+        stale.remove()
+    for row in rows[j:]:
+        list_view.append(make(row))
+
+
 class TodoApp(App):
     CSS = """
     Screen { layout: vertical; }
@@ -158,18 +193,24 @@ class TodoApp(App):
     def _render_rows(self) -> None:
         list_view = self.query_one("#list", ListView)
         previous_index = list_view.index or 0
-        list_view.clear()
-        for row in self._rows:
-            list_view.append(TodoRow(row))
+        _diff_apply(
+            list_view,
+            self._rows,
+            key_of=lambda r: f"{r.parent.id}:{r.sub.id if r.sub else ''}",
+            make=TodoRow,
+        )
         if self._rows:
             list_view.index = min(previous_index, len(self._rows) - 1)
 
     def _render_sidebar(self) -> None:
         self._week_rows = build_week_rows(self.store.dates(), self._week_state)
         sidebar = self.query_one("#sidebar", ListView)
-        sidebar.clear()
-        for row in self._week_rows:
-            sidebar.append(WeekRowWidget(row))
+        _diff_apply(
+            sidebar,
+            self._week_rows,
+            key_of=lambda wr: f"{wr.week.key}:{wr.day.isoformat() if wr.day else ''}",
+            make=WeekRowWidget,
+        )
         # Keep the highlight on the row matching the currently-viewed day if it's
         # visible (i.e. the week is open); otherwise highlight that day's week header.
         target = self._sidebar_index_for_current_date()
