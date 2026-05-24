@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Run the app:** `./todo` (bash launcher that execs `.venv/bin/python todo.py`)
 - **Run directly:** `.venv/bin/python todo.py`
+- **Run tests:** `.venv/bin/python -m pytest tests/` (requires `pip install pytest`)
 - **Use isolated data:** set `TODO_TUI_DATA=/tmp/test-todos.json` to point at a throwaway store instead of `~/.config/todo-tui/todos.json` — useful when testing without touching real data.
 
-There is no build step, no test suite, and no linter configured. Dependencies (`textual`, `rich`) live only in `.venv`; there is no `requirements.txt`. If adding dependencies, install into `.venv` and consider adding a requirements file. This is not a git repository.
+There is no build step or linter configured. Runtime dependencies (`textual`, `rich`) are in `requirements.txt`; `pytest` is a dev-only dep installed manually. Tests in `tests/` cover the non-UI logic (serialization, Store, flatten/collapse, completion helpers) and use the `data_path` fixture (in `tests/conftest.py`) to redirect `TODO_TUI_DATA` to a temp file per test.
 
 ## Architecture
 
