@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
+
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -26,10 +30,62 @@ def _parse_folders(raw: str) -> list[str]:
     return [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
 
 
-class _ItemForm(ModalScreen[dict | None]):
-    """Shared modal for todos and subtasks. Dismisses with
-    {"text": str, "folders": list[str], "claude_session_id": str | None}
-    or None on cancel."""
+@dataclass
+class ItemFormResult:
+    """Typed payload returned by `_ItemForm`. Field names line up with
+    `Todo.new` / `Subtask.new` kwargs so `Todo.new(**asdict(result))` works."""
+
+    text: str = ""
+    folders: list[str] = field(default_factory=list)
+    claude_session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FieldSpec:
+    """One row in the form. Drives both `compose` and `_save`.
+
+    Adding a new field to the form is: append one `FieldSpec` to
+    `_ItemForm.FIELDS` and add the matching attribute on `ItemFormResult`."""
+
+    id: str
+    label: str
+    placeholder: str
+    attr: str  # attribute on `ItemFormResult` this row reads/writes
+    to_input: Callable[[ItemFormResult], str]
+    from_input: Callable[[str], Any]
+
+
+_FIELDS: list[FieldSpec] = [
+    FieldSpec(
+        id="text",
+        label="Text",
+        placeholder="What to do",
+        attr="text",
+        to_input=lambda r: r.text,
+        from_input=lambda s: s.strip(),
+    ),
+    FieldSpec(
+        id="folders",
+        label="Folders",
+        placeholder="path/a, path/b",
+        attr="folders",
+        to_input=lambda r: ", ".join(r.folders),
+        from_input=_parse_folders,
+    ),
+    FieldSpec(
+        id="session",
+        label="Session",
+        placeholder="Claude session id (optional)",
+        attr="claude_session_id",
+        to_input=lambda r: r.claude_session_id or "",
+        from_input=lambda s: s.strip() or None,
+    ),
+]
+
+
+class _ItemForm(ModalScreen["ItemFormResult | None"]):
+    """Shared modal for todos and subtasks. Dismisses with `ItemFormResult`
+    on save, `None` on cancel. Field layout is driven by `FIELDS`."""
 
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
@@ -37,52 +93,39 @@ class _ItemForm(ModalScreen[dict | None]):
         ("down", "focus_next", ""),
     ]
 
+    FIELDS: ClassVar[list[FieldSpec]] = _FIELDS
     text_placeholder = "What to do"
 
-    def __init__(self, initial: dict | None = None) -> None:
+    def __init__(self, initial: ItemFormResult | None = None) -> None:
         super().__init__()
-        self._initial = initial or {}
+        self._initial = initial or ItemFormResult()
 
     def compose(self) -> ComposeResult:
-        init = self._initial
-        folders_value = ", ".join(init.get("folders") or [])
-
         with Vertical(id="card"):
-            with Horizontal(classes="row"):
-                yield Label("Text")
-                yield Input(
-                    value=init.get("text", ""),
-                    id="text",
-                    placeholder=self.text_placeholder,
-                )
-            with Horizontal(classes="row"):
-                yield Label("Folders")
-                yield Input(
-                    value=folders_value,
-                    id="folders",
-                    placeholder="path/a, path/b",
-                )
-            with Horizontal(classes="row"):
-                yield Label("Session")
-                yield Input(
-                    value=init.get("claude_session_id") or "",
-                    id="session",
-                    placeholder="Claude session id (optional)",
-                )
+            for spec in self.FIELDS:
+                placeholder = self.text_placeholder if spec.id == "text" else spec.placeholder
+                with Horizontal(classes="row"):
+                    yield Label(spec.label)
+                    yield Input(
+                        value=spec.to_input(self._initial),
+                        id=spec.id,
+                        placeholder=placeholder,
+                    )
             yield Label(_HINT, id="hint")
 
     def on_mount(self) -> None:
-        self.query_one("#text", Input).focus()
+        self.query_one(f"#{self.FIELDS[0].id}", Input).focus()
 
     @on(Input.Submitted)
     def _save(self) -> None:
-        text = self.query_one("#text", Input).value.strip()
-        if not text:
+        result = ItemFormResult()
+        for spec in self.FIELDS:
+            raw = self.query_one(f"#{spec.id}", Input).value
+            setattr(result, spec.attr, spec.from_input(raw))
+        if not result.text:
             self.app.notify("Text is required.", severity="warning")
             return
-        folders = _parse_folders(self.query_one("#folders", Input).value)
-        session = self.query_one("#session", Input).value.strip() or None
-        self.dismiss({"text": text, "folders": folders, "claude_session_id": session})
+        self.dismiss(result)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

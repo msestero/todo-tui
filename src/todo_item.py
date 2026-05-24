@@ -42,3 +42,14 @@ class Todo:
             folders=list(raw.get("folders") or []),
             claude_session_id=raw.get("claude_session_id"),
         )
+
+    def complete(self, today: str) -> None:
+        """Mark done and stamp the date. Always route through here — never set
+        `.done` directly — so the date always reflects when it was completed."""
+        self.done = True
+        self.date = today
+
+    def uncomplete(self, today: str) -> None:
+        """Reopen and stamp today. Re-opening from a past day rolls it forward."""
+        self.done = False
+        self.date = today

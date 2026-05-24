@@ -46,3 +46,31 @@ def test_from_dict_ignores_unknown_keys():
     raw = {"id": "x", "text": "t", "date": "2026-01-01", "score": 5, "repeat_days": [1, 2]}
     t = Todo.from_dict(raw)
     assert t.text == "t"
+
+
+# ---------------- complete / uncomplete ----------------
+
+
+def test_complete_sets_done_and_stamps_date():
+    t = Todo.new("x")
+    t.date = "2020-01-01"
+    t.complete("2026-05-24")
+    assert t.done is True
+    assert t.date == "2026-05-24"
+
+
+def test_uncomplete_resets_done_and_stamps_date():
+    t = Todo.new("x")
+    t.done = True
+    t.date = "2020-01-01"
+    t.uncomplete("2026-05-24")
+    assert t.done is False
+    assert t.date == "2026-05-24"
+
+
+def test_complete_is_idempotent():
+    t = Todo.new("x")
+    t.complete("2026-01-01")
+    t.complete("2026-02-02")
+    assert t.done is True
+    assert t.date == "2026-02-02"  # latest stamp wins

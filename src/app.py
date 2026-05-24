@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import uuid
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Label, ListView, Static
 
 import launcher
-from forms import NewFolderForm, SubtaskForm, TodoForm
+from forms import ItemFormResult, NewFolderForm, SubtaskForm, TodoForm
 from row import Row
 from store import Store
 from subtask import Subtask
@@ -159,16 +160,6 @@ class TodoApp(App):
         right = f"{dates[i + 1]} [dim]→[/]" if i < len(dates) - 1 else "[dim]end   [/]"
         return f"{left}   {right}"
 
-    # ------------------------------------------------------------------ completion
-
-    def _complete_parent(self, todo: Todo) -> None:
-        todo.done = True
-        todo.date = date.today().isoformat()
-
-    def _uncomplete_parent(self, todo: Todo) -> None:
-        todo.done = False
-        todo.date = date.today().isoformat()
-
     # ------------------------------------------------------------------ actions: add / edit
 
     def action_add(self) -> None:
@@ -176,16 +167,10 @@ class TodoApp(App):
             self.notify("Switch to today (t) to add.", severity="warning")
             return
 
-        def on_save(result: dict | None) -> None:
+        def on_save(result: ItemFormResult | None) -> None:
             if result is None:
                 return
-            self.store.todos.append(
-                Todo.new(
-                    result["text"],
-                    folders=result["folders"],
-                    claude_session_id=result["claude_session_id"],
-                )
-            )
+            self.store.todos.append(Todo.new(**asdict(result)))
             self._save_and_refresh()
 
         self.push_screen(TodoForm(), on_save)
@@ -200,63 +185,40 @@ class TodoApp(App):
             return
         parent = row.parent
 
-        def on_save(result: dict | None) -> None:
+        def on_save(result: ItemFormResult | None) -> None:
             if result is None:
                 return
-            parent.subtasks.append(
-                Subtask.new(
-                    result["text"],
-                    folders=result["folders"],
-                    claude_session_id=result["claude_session_id"],
-                )
-            )
+            parent.subtasks.append(Subtask.new(**asdict(result)))
             self._save_and_refresh()
 
-        self.push_screen(SubtaskForm(), on_save)
+        self.push_screen(SubtaskForm(initial=ItemFormResult()), on_save)
 
     def action_edit(self) -> None:
         row = self._selected_row()
         if row is None:
             self.notify("Select a todo first.", severity="warning")
             return
-        if row.sub is None:
-            self._edit_parent(row.parent)
-        else:
-            self._edit_subtask(row.sub)
+        target = row.sub or row.parent
+        form_cls = SubtaskForm if row.sub else TodoForm
+        initial = ItemFormResult(
+            text=target.text,
+            folders=list(target.folders),
+            claude_session_id=target.claude_session_id,
+        )
 
-    def _edit_parent(self, todo: Todo) -> None:
-        initial = {
-            "text": todo.text,
-            "folders": todo.folders,
-            "claude_session_id": todo.claude_session_id,
-        }
-
-        def on_save(result: dict | None) -> None:
+        def on_save(result: ItemFormResult | None) -> None:
             if result is None:
                 return
-            todo.text = result["text"]
-            todo.folders = result["folders"]
-            todo.claude_session_id = result["claude_session_id"]
+            self._apply_form_result(target, result)
             self._save_and_refresh()
 
-        self.push_screen(TodoForm(initial=initial), on_save)
+        self.push_screen(form_cls(initial=initial), on_save)
 
-    def _edit_subtask(self, subtask: Subtask) -> None:
-        initial = {
-            "text": subtask.text,
-            "folders": subtask.folders,
-            "claude_session_id": subtask.claude_session_id,
-        }
-
-        def on_save(result: dict | None) -> None:
-            if result is None:
-                return
-            subtask.text = result["text"]
-            subtask.folders = result["folders"]
-            subtask.claude_session_id = result["claude_session_id"]
-            self._save_and_refresh()
-
-        self.push_screen(SubtaskForm(initial=initial), on_save)
+    @staticmethod
+    def _apply_form_result(target: Todo | Subtask, result: ItemFormResult) -> None:
+        target.text = result.text
+        target.folders = result.folders
+        target.claude_session_id = result.claude_session_id
 
     # ------------------------------------------------------------------ actions: toggle / delete
 
@@ -271,22 +233,24 @@ class TodoApp(App):
         self._save_and_refresh()
 
     def _toggle_parent(self, todo: Todo) -> None:
+        today = date.today().isoformat()
         if todo.done:
             was_remote = not self._viewing_today()
-            self._uncomplete_parent(todo)
+            todo.uncomplete(today)
             if was_remote:
                 self.notify(f"Revived to today: {todo.text}")
-                self.current_date = date.today().isoformat()
+                self.current_date = today
             return
-        self._complete_parent(todo)
+        todo.complete(today)
 
     def _toggle_subtask(self, parent: Todo, subtask: Subtask) -> None:
         subtask.done = not subtask.done
         all_done = parent.subtasks and all(s.done for s in parent.subtasks)
+        today = date.today().isoformat()
         if all_done and not parent.done:
-            self._complete_parent(parent)
+            parent.complete(today)
         elif not all_done and parent.done:
-            self._uncomplete_parent(parent)
+            parent.uncomplete(today)
 
     def action_delete(self) -> None:
         row = self._selected_row()
