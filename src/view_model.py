@@ -24,13 +24,18 @@ class ViewState:
 
 
 def build_rows(todos: list[Todo], state: ViewState) -> list[Row]:
-    """Flatten parents and subtasks into the display list, honoring collapse."""
+    """Flatten parents and subtasks into the display list, honoring collapse.
+
+    Done items sort toward the bottom — parents within the day, and subtasks
+    within their parent. The sort is stable, so relative order within the
+    done/pending groups is preserved."""
     rows: list[Row] = []
-    for todo in todos:
+    for todo in sorted(todos, key=lambda t: t.done):
         rows.append(_parent_row(todo, state))
         if todo.id in state.collapsed:
             continue
-        rows.extend(Row(parent=todo, sub=sub) for sub in todo.subtasks)
+        subs = sorted(todo.subtasks, key=lambda s: s.done)
+        rows.extend(Row(parent=todo, sub=sub) for sub in subs)
     return rows
 
 

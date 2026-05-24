@@ -58,3 +58,39 @@ def test_empty_input_returns_empty_list():
 def test_default_view_state_is_empty():
     state = ViewState()
     assert state.collapsed == set()
+
+
+def test_done_parents_sort_to_bottom():
+    a = Todo.new("a")
+    b = Todo.new("b")
+    c = Todo.new("c")
+    a.done = True
+    rows = build_rows([a, b, c], ViewState())
+    assert [r.parent.text for r in rows] == ["b", "c", "a"]
+
+
+def test_done_subtasks_sort_to_bottom_within_parent():
+    t = _todo_with_subs("p", ["a", "b", "c"])
+    t.subtasks[0].done = True
+    t.subtasks[2].done = True
+    rows = build_rows([t], ViewState())
+    sub_texts = [r.sub.text for r in rows if r.sub]
+    assert sub_texts == ["b", "a", "c"]
+
+
+def test_parent_sort_is_stable_among_pending():
+    a = Todo.new("a")
+    b = Todo.new("b")
+    c = Todo.new("c")
+    rows = build_rows([a, b, c], ViewState())
+    assert [r.parent.text for r in rows] == ["a", "b", "c"]
+
+
+def test_done_parent_keeps_its_subtasks_grouped_below_it():
+    """When a parent moves to the bottom, its subtasks come with it."""
+    a = _todo_with_subs("a", ["a1"])
+    b = _todo_with_subs("b", ["b1"])
+    a.done = True
+    rows = build_rows([a, b], ViewState())
+    texts = [r.parent.text + ("/" + r.sub.text if r.sub else "") for r in rows]
+    assert texts == ["b", "b/b1", "a", "a/a1"]
