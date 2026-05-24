@@ -63,6 +63,8 @@ Pressing `c` on a row opens a tmux layout — left pane runs `claude`, right col
 - **Session ids are pre-bound.** First `c` on a row generates a fresh uuid, saves it to the row, and passes it to claude via `--session-id <uuid>`. Subsequent `c` resumes via `--resume <uuid>`. No filesystem polling, no manual paste-back.
 - **tmux behavior.** Inside tmux, opens a new window. Window title is the todo/subtask text; session name (when spawned outside tmux) is `todo-<id>`. Outside tmux, creates a detached session and spawns a terminal (`$TERMINAL` if set, otherwise tries alacritty/kitty/wezterm/foot/ghostty/gnome-terminal/konsole/xterm) attached to it.
 - **Folder paths** are `expanduser()`-resolved before launch; if a folder no longer exists, the launch aborts with a notification (it does *not* auto-recreate).
+- **Subtask context on every launch.** On every `c` (both first launch and resume), the parent todo + its subtasks are rendered to markdown by `claude_context.build_context` and passed to claude via `--append-system-prompt`. Re-injecting on each launch reflects the live state of the todo (e.g. newly-checked subtasks) rather than freezing it at first launch.
+- **Answering "what are the subtasks?" — read the system prompt, not the JSON.** When the user (in a session launched via `c`) asks about the current todo's subtasks or their done state, the answer is already in your system prompt as a `# Task: …` / `## Subtasks` block. Read it from there. Do **not** shell out to `cat ~/.config/todo-tui/todos.json` — that defeats the whole point of the injection. The JSON is only the right source if the user asks about *other* todos in the day or explicitly says to re-check the file.
 
 ## Behaviors worth knowing before editing
 
