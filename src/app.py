@@ -37,7 +37,8 @@ HELP_ENTRIES = [
     ("space", "Toggle done on the selected row"),
     ("enter", "Hide/show subtasks (list) or pick week/day (sidebar)"),
     ("d", "Delete the selected todo or subtask"),
-    ("w", "Focus the week sidebar"),
+    ("w / ←", "Focus the week sidebar"),
+    ("→", "Focus the task list"),
     ("tab", "Cycle focus between sidebar and list"),
     ("t", "Jump to today"),
     ("?", "Show this help"),
@@ -91,6 +92,8 @@ class TodoApp(App):
         Binding("d", "delete", "Delete", show=False),
         Binding("c", "claude", "Claude", show=False),
         Binding("w", "focus_sidebar", "Weeks", show=False),
+        Binding("left,h", "focus_sidebar", "← Weeks", show=False),
+        Binding("right,l", "focus_list", "Tasks →", show=False),
         Binding("t", "today", "Today", show=False),
         Binding("q", "quit", "Quit", show=False),
         Binding("question_mark", "help", "? Help"),
@@ -297,6 +300,9 @@ class TodoApp(App):
 
     def action_focus_sidebar(self) -> None:
         self.query_one("#sidebar", ListView).focus()
+
+    def action_focus_list(self) -> None:
+        self.query_one("#list", ListView).focus()
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())

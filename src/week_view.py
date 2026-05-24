@@ -53,7 +53,7 @@ def week_of(d: date) -> Week:
 def build_week_rows(iso_dates: list[str], state: WeekViewState) -> list[WeekRow]:
     """Flatten the weeks spanned by `iso_dates` into a sidebar row list.
 
-    Weeks are returned newest first. The expanded week (if any) is followed by
+    Weeks are returned oldest first. The expanded week (if any) is followed by
     its 7 day rows in Mon..Sun order.
     """
     weeks = _unique_weeks(iso_dates)
@@ -71,4 +71,4 @@ def _unique_weeks(iso_dates: list[str]) -> list[Week]:
     for iso in iso_dates:
         w = week_of(date.fromisoformat(iso))
         seen.setdefault(w.key, w)
-    return sorted(seen.values(), key=lambda w: w.start, reverse=True)
+    return sorted(seen.values(), key=lambda w: w.start)

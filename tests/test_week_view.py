@@ -35,10 +35,10 @@ def test_build_rows_collapses_all_weeks_by_default():
     assert all(r.expanded is False for r in rows)
 
 
-def test_build_rows_orders_weeks_newest_first():
+def test_build_rows_orders_weeks_oldest_first():
     rows = build_week_rows(["2026-05-08", "2026-05-22", "2026-05-15"], WeekViewState())
     labels = [r.week.label for r in rows]
-    assert labels == ["5/18-5/24", "5/11-5/17", "5/4-5/10"]
+    assert labels == ["5/4-5/10", "5/11-5/17", "5/18-5/24"]
 
 
 def test_dates_in_same_week_are_deduped():
