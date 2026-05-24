@@ -20,6 +20,7 @@ from store import Store
 from subtask import Subtask
 from todo_item import Todo
 from todo_row import TodoRow
+from view_model import ViewState, build_rows
 
 TODO_LIST_ROOT = Path.home() / "TodoList"
 
@@ -97,7 +98,7 @@ class TodoApp(App):
         self.store.save()
         self.current_date = date.today().isoformat()
         self._rows: list[Row] = []
-        self._collapsed: set[str] = set()
+        self._view_state = ViewState()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -114,17 +115,6 @@ class TodoApp(App):
     def _viewing_today(self) -> bool:
         return self.current_date == date.today().isoformat()
 
-    def _flatten(self, todos: list[Todo]) -> list[Row]:
-        rows: list[Row] = []
-        for todo in todos:
-            is_collapsed = todo.id in self._collapsed and bool(todo.subtasks)
-            rows.append(Row(parent=todo, sub=None, collapsed=is_collapsed))
-            if todo.id in self._collapsed:
-                continue
-            for subtask in todo.subtasks:
-                rows.append(Row(parent=todo, sub=subtask))
-        return rows
-
     def _selected_row(self) -> Row | None:
         list_view = self.query_one("#list", ListView)
         if list_view.index is None or not self._rows:
@@ -139,7 +129,7 @@ class TodoApp(App):
 
     def refresh_list(self) -> None:
         parents = self.store.by_date(self.current_date)
-        self._rows = self._flatten(parents)
+        self._rows = build_rows(parents, self._view_state)
         self._render_rows()
         self._render_title()
         self._render_stats(parents)
@@ -338,11 +328,12 @@ class TodoApp(App):
         row = self._selected_row()
         if row is None:
             return
+        collapsed = self._view_state.collapsed
         parent_id = row.parent.id
-        if parent_id in self._collapsed:
-            self._collapsed.discard(parent_id)
+        if parent_id in collapsed:
+            collapsed.discard(parent_id)
         else:
-            self._collapsed.add(parent_id)
+            collapsed.add(parent_id)
         self.refresh_list()
 
     # ------------------------------------------------------------------ actions: claude
