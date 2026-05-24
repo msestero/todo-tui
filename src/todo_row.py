@@ -16,7 +16,7 @@ class TodoRow(ListItem):
         r = self.row
         if r.sub is None:
             text = escape(r.parent.text)
-            suffix = f"  [dim cyan]({len(r.parent.subtasks)} hidden)[/]" if r.collapsed else ""
+            suffix = _suffix(r)
             if r.parent.done:
                 yield Static(f"[green]✔[/]  [strike dim]{text}[/]{suffix}")
             else:
@@ -27,3 +27,11 @@ class TodoRow(ListItem):
                 yield Static(f"    [green]✔[/] [strike dim]{text}[/]")
             else:
                 yield Static(f"    [dim]·[/] {text}")
+
+
+def _suffix(r: Row) -> str:
+    if r.collapsed:
+        return f"  [dim cyan]({len(r.parent.subtasks)} hidden)[/]"
+    if r.done_hidden:
+        return f"  [dim cyan]({r.done_hidden} done hidden)[/]"
+    return ""

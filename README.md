@@ -34,10 +34,10 @@ todo
 | `c` | Open a tmux Claude session for the selected row |
 | `space` | Toggle done on the selected row |
 | `enter` | Collapse/expand subtasks (task list) — open/select week or day (sidebar) |
+| `h` | Hide/show *done* subtasks for the selected parent |
 | `d` | Delete the selected todo or subtask |
-| `← / h` | Focus the week sidebar |
-| `→ / l` | Focus the task list |
-| `w` | Focus the week sidebar |
+| `←` / `w` | Focus the week sidebar |
+| `→` | Focus the task list |
 | `t` | Jump to today (re-opens today's week) |
 | `?` | Help |
 | `q` | Quit |

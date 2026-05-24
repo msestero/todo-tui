@@ -36,6 +36,7 @@ HELP_ENTRIES = [
     ("c", "Open Claude session for the selected row (tmux)"),
     ("space", "Toggle done on the selected row"),
     ("enter", "Hide/show subtasks (list) or pick week/day (sidebar)"),
+    ("h", "Hide/show done subtasks for the selected parent"),
     ("d", "Delete the selected todo or subtask"),
     ("w / ←", "Focus the week sidebar"),
     ("→", "Focus the task list"),
@@ -92,8 +93,9 @@ class TodoApp(App):
         Binding("d", "delete", "Delete", show=False),
         Binding("c", "claude", "Claude", show=False),
         Binding("w", "focus_sidebar", "Weeks", show=False),
-        Binding("left,h", "focus_sidebar", "← Weeks", show=False),
-        Binding("right,l", "focus_list", "Tasks →", show=False),
+        Binding("left", "focus_sidebar", "← Weeks", show=False),
+        Binding("right", "focus_list", "Tasks →", show=False),
+        Binding("h", "toggle_hide_done", "Hide done subs", show=False),
         Binding("t", "today", "Today", show=False),
         Binding("q", "quit", "Quit", show=False),
         Binding("question_mark", "help", "? Help"),
@@ -341,6 +343,20 @@ class TodoApp(App):
             collapsed.discard(parent_id)
         else:
             collapsed.add(parent_id)
+        self.refresh_list()
+
+    def action_toggle_hide_done(self) -> None:
+        """Toggle hiding *done* subtasks for the parent owning the selected row.
+        Independent from the full collapse — pending subtasks stay visible."""
+        row = self._selected_row()
+        if row is None:
+            return
+        hide = self._view_state.hide_done
+        parent_id = row.parent.id
+        if parent_id in hide:
+            hide.discard(parent_id)
+        else:
+            hide.add(parent_id)
         self.refresh_list()
 
     # ------------------------------------------------------------------ actions: claude
