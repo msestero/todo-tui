@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import json
 from datetime import date, timedelta
@@ -5,6 +6,7 @@ from datetime import date, timedelta
 
 def _reload_store():
     import store
+
     importlib.reload(store)
     return store
 
@@ -19,6 +21,7 @@ def test_load_returns_empty_when_file_missing(data_path):
 def test_save_then_load_round_trip(data_path):
     s = _reload_store()
     from subtask import Subtask
+
     todo = s.Todo.new("hello", folders=["~/x"], claude_session_id="sid")
     todo.subtasks = [Subtask.new("sub", folders=["~/y"])]
 
@@ -41,11 +44,13 @@ def test_save_is_atomic_no_partial_file(data_path, monkeypatch):
     the original file must remain intact."""
     s = _reload_store()
     from subtask import Subtask  # noqa
+
     s.Store(todos=[s.Todo.new("v1")]).save()
     original_bytes = data_path.read_bytes()
 
     # Force os.replace to blow up — simulates a crash mid-rename.
     import os as real_os
+
     real_replace = real_os.replace
 
     def boom(src, dst):
@@ -53,10 +58,8 @@ def test_save_is_atomic_no_partial_file(data_path, monkeypatch):
 
     monkeypatch.setattr(s.os, "replace", boom)
 
-    try:
+    with contextlib.suppress(OSError):
         s.Store(todos=[s.Todo.new("v2-corrupt")]).save()
-    except OSError:
-        pass
 
     # Original file is untouched.
     assert data_path.read_bytes() == original_bytes
@@ -103,8 +106,10 @@ def test_dates_includes_today_and_visible_only(data_path):
     past = (date.today() - timedelta(days=2)).isoformat()
     future = (date.today() + timedelta(days=2)).isoformat()
 
-    a = s.Todo.new("a"); a.date = past
-    b = s.Todo.new("b"); b.date = future
+    a = s.Todo.new("a")
+    a.date = past
+    b = s.Todo.new("b")
+    b.date = future
     store_obj = s.Store(todos=[a, b])
 
     result = store_obj.dates()
@@ -116,9 +121,12 @@ def test_dates_includes_today_and_visible_only(data_path):
 
 def test_by_date_filters_to_target(data_path):
     s = _reload_store()
-    a = s.Todo.new("a"); a.date = "2026-01-01"
-    b = s.Todo.new("b"); b.date = "2026-01-02"
-    c = s.Todo.new("c"); c.date = "2026-01-01"
+    a = s.Todo.new("a")
+    a.date = "2026-01-01"
+    b = s.Todo.new("b")
+    b.date = "2026-01-02"
+    c = s.Todo.new("c")
+    c.date = "2026-01-01"
     store_obj = s.Store(todos=[a, b, c])
 
     on_first = store_obj.by_date("2026-01-01")

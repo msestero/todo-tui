@@ -22,7 +22,7 @@ class Todo:
         text: str,
         folders: list[str] | None = None,
         claude_session_id: str | None = None,
-    ) -> "Todo":
+    ) -> Todo:
         return Todo(
             id=uuid.uuid4().hex[:8],
             text=text,
@@ -32,7 +32,7 @@ class Todo:
         )
 
     @classmethod
-    def from_dict(cls, raw: dict) -> "Todo":
+    def from_dict(cls, raw: dict) -> Todo:
         return cls(
             id=raw["id"],
             text=raw["text"],

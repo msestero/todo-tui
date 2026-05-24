@@ -6,7 +6,6 @@ from datetime import date
 from pathlib import Path
 
 from rich.table import Table
-
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -21,7 +20,6 @@ from store import Store
 from subtask import Subtask
 from todo_item import Todo
 from todo_row import TodoRow
-
 
 TODO_LIST_ROOT = Path.home() / "TodoList"
 
@@ -158,21 +156,17 @@ class TodoApp(App):
     def _render_title(self) -> None:
         viewed = date.fromisoformat(self.current_date)
         suffix = "  [dim](today)[/]" if self._viewing_today() else ""
-        self.query_one("#title", Label).update(
-            f"{viewed.strftime('%A, %B %d, %Y')}{suffix}"
-        )
+        self.query_one("#title", Label).update(f"{viewed.strftime('%A, %B %d, %Y')}{suffix}")
 
     def _render_stats(self, parents: list[Todo]) -> None:
         done = sum(1 for todo in parents if todo.done)
-        self.query_one("#stats", Label).update(
-            f"{done}/{len(parents)} done   {self._nav_hint()}"
-        )
+        self.query_one("#stats", Label).update(f"{done}/{len(parents)} done   {self._nav_hint()}")
 
     def _nav_hint(self) -> str:
         dates = self.store.dates()
         i = dates.index(self.current_date)
-        left = f"[dim]←[/] {dates[i-1]}" if i > 0 else "[dim]   start[/]"
-        right = f"{dates[i+1]} [dim]→[/]" if i < len(dates) - 1 else "[dim]end   [/]"
+        left = f"[dim]←[/] {dates[i - 1]}" if i > 0 else "[dim]   start[/]"
+        right = f"{dates[i + 1]} [dim]→[/]" if i < len(dates) - 1 else "[dim]end   [/]"
         return f"{left}   {right}"
 
     # ------------------------------------------------------------------ completion
@@ -195,11 +189,13 @@ class TodoApp(App):
         def on_save(result: dict | None) -> None:
             if result is None:
                 return
-            self.store.todos.append(Todo.new(
-                result["text"],
-                folders=result["folders"],
-                claude_session_id=result["claude_session_id"],
-            ))
+            self.store.todos.append(
+                Todo.new(
+                    result["text"],
+                    folders=result["folders"],
+                    claude_session_id=result["claude_session_id"],
+                )
+            )
             self._save_and_refresh()
 
         self.push_screen(TodoForm(), on_save)
@@ -217,11 +213,13 @@ class TodoApp(App):
         def on_save(result: dict | None) -> None:
             if result is None:
                 return
-            parent.subtasks.append(Subtask.new(
-                result["text"],
-                folders=result["folders"],
-                claude_session_id=result["claude_session_id"],
-            ))
+            parent.subtasks.append(
+                Subtask.new(
+                    result["text"],
+                    folders=result["folders"],
+                    claude_session_id=result["claude_session_id"],
+                )
+            )
             self._save_and_refresh()
 
         self.push_screen(SubtaskForm(), on_save)

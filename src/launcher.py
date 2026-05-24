@@ -1,6 +1,7 @@
 """Spawn a tmux window/session with Claude on the left and one shell per folder
 stacked vertically on the right. Inside tmux, opens a new window. Outside tmux,
 spawns a terminal emulator running a fresh attached tmux session."""
+
 from __future__ import annotations
 
 import os
@@ -8,11 +9,16 @@ import shlex
 import shutil
 import subprocess
 
-
 # Terminal emulators tried, in order, when $TERMINAL is unset or not found.
 _TERMINAL_CANDIDATES = [
-    "alacritty", "kitty", "wezterm", "foot", "ghostty",
-    "gnome-terminal", "konsole", "xterm",
+    "alacritty",
+    "kitty",
+    "wezterm",
+    "foot",
+    "ghostty",
+    "gnome-terminal",
+    "konsole",
+    "xterm",
 ]
 
 
@@ -33,9 +39,10 @@ def _find_terminal() -> str | None:
 def _split(target: str, orientation: str, cwd: str) -> str:
     """Split `target` (window or pane id) and return the new pane's id."""
     result = subprocess.run(
-        ["tmux", "split-window", orientation, "-t", target, "-c", cwd,
-         "-P", "-F", "#{pane_id}"],
-        capture_output=True, text=True, check=True,
+        ["tmux", "split-window", orientation, "-t", target, "-c", cwd, "-P", "-F", "#{pane_id}"],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return result.stdout.strip()
 
@@ -70,17 +77,41 @@ def launch(
     inside_tmux = in_tmux()
     if inside_tmux:
         result = subprocess.run(
-            ["tmux", "new-window", "-n", window_name, "-c", primary_folder,
-             "-P", "-F", "#{window_id}",
-             "bash", "-c", keep_open],
-            capture_output=True, text=True, check=True,
+            [
+                "tmux",
+                "new-window",
+                "-n",
+                window_name,
+                "-c",
+                primary_folder,
+                "-P",
+                "-F",
+                "#{window_id}",
+                "bash",
+                "-c",
+                keep_open,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         window_target = result.stdout.strip()  # e.g. "@5"
     else:
         subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session_name, "-n", window_name,
-             "-c", primary_folder,
-             "bash", "-c", keep_open],
+            [
+                "tmux",
+                "new-session",
+                "-d",
+                "-s",
+                session_name,
+                "-n",
+                window_name,
+                "-c",
+                primary_folder,
+                "bash",
+                "-c",
+                keep_open,
+            ],
             check=True,
         )
         window_target = f"{session_name}:0"

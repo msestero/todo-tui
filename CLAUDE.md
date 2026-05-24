@@ -4,12 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- **Run the app:** `./todo` (bash launcher that execs `.venv/bin/python todo.py`)
-- **Run directly:** `.venv/bin/python todo.py`
-- **Run tests:** `.venv/bin/python -m pytest tests/` (requires `pip install pytest`)
-- **Use isolated data:** set `TODO_TUI_DATA=/tmp/test-todos.json` to point at a throwaway store instead of `~/.config/todo-tui/todos.json` — useful when testing without touching real data.
+- **Run the app:** `./todo` (bash launcher that execs `.venv/bin/python src/todo.py`)
+- **Run directly:** `.venv/bin/python src/todo.py`
+- **Run tests:** `.venv/bin/python -m pytest tests/`
+- **Lint:** `.venv/bin/ruff check src/ tests/`
+- **Format:** `.venv/bin/ruff format src/ tests/`
+- **Install (dev):** `./install.sh` — sets up `.venv`, installs runtime + dev deps (ruff, pytest), and wires up the git pre-commit hook.
+- **Use isolated data:** set `TODO_TUI_DATA=/tmp/test-todos.json` to point at a throwaway store instead of `~/.config/todo-tui/todos.json`.
 
-There is no build step or linter configured. Runtime dependencies (`textual`, `rich`) are in `requirements.txt`; `pytest` is a dev-only dep installed manually. Tests in `tests/` cover the non-UI logic (serialization, Store, flatten/collapse, completion helpers) and use the `data_path` fixture (in `tests/conftest.py`) to redirect `TODO_TUI_DATA` to a temp file per test.
+Runtime deps (`textual`, `rich`) are in `requirements.txt`; dev deps (`ruff`, `pytest`) are installed by `install.sh`. Lint/format config is in `pyproject.toml`. Tests in `tests/` cover the non-UI logic (serialization, Store, flatten/collapse, completion helpers) and use the `data_path` fixture (in `tests/conftest.py`) to redirect `TODO_TUI_DATA` to a temp file per test.
+
+## Workflow (for Claude)
+
+When making changes, follow this loop:
+
+1. **Add or update tests alongside any feature or logic change.** New behavior in `src/` should land with new assertions in `tests/`. Bug fixes get a regression test.
+2. **Before claiming a task is done, run:** `.venv/bin/ruff check src/ tests/ && .venv/bin/ruff format --check src/ tests/ && .venv/bin/python -m pytest tests/`. All three must pass.
+3. **If green, commit and push immediately.** The user prefers small commits pushed to `master` rather than batched. Use terse commit messages (one short line is fine).
+4. **If anything is red, fix it before committing** — do not skip hooks (`--no-verify`) without being asked.
+
+The git pre-commit hook (`scripts/pre-commit`, symlinked into `.git/hooks/`) runs the same lint + format-check + tests gate, so a `git commit` will fail on red.
+
+UI-only changes that genuinely have no testable logic (pure CSS, label tweaks) don't need new tests — but flatten/completion/store logic, key bindings, and form behavior do.
 
 ## Architecture
 
@@ -41,11 +57,11 @@ The footer is bare — only `? Help` is shown. Pressing `?` opens `HelpScreen` (
 
 ## Claude integration
 
-Pressing `c` on a row opens a tmux layout — left pane runs `claude` (resumes via `--resume <id>` if `claude_session_id` is set, else fresh), right column has one shell per folder stacked vertically.
+Pressing `c` on a row opens a tmux layout — left pane runs `claude`, right column has one shell per folder stacked vertically.
 
 - **Folder resolution.** A subtask inherits the parent's folders if its own `folders` list is empty; the session id is always the row's own. If neither parent nor subtask has any folders, a `NewFolderForm` modal asks for a name, creates `~/TodoList/<name>`, attaches it to the **parent** (since subtasks inherit), saves, and continues to launch.
-- **tmux behavior.** Inside tmux, opens a new window named `todo-<id>`. Outside tmux, creates a detached session and spawns a terminal (`$TERMINAL` if set, otherwise tries alacritty/kitty/wezterm/foot/ghostty/gnome-terminal/konsole/xterm) attached to it.
-- **Capturing new session ids.** Fresh `claude` invocations don't automatically populate `claude_session_id` — paste the id back in via the edit form (`e`) once you know it. Subsequent `c` will resume.
+- **Session ids are pre-bound.** First `c` on a row generates a fresh uuid, saves it to the row, and passes it to claude via `--session-id <uuid>`. Subsequent `c` resumes via `--resume <uuid>`. No filesystem polling, no manual paste-back.
+- **tmux behavior.** Inside tmux, opens a new window. Window title is the todo/subtask text; session name (when spawned outside tmux) is `todo-<id>`. Outside tmux, creates a detached session and spawns a terminal (`$TERMINAL` if set, otherwise tries alacritty/kitty/wezterm/foot/ghostty/gnome-terminal/konsole/xterm) attached to it.
 - **Folder paths** are `expanduser()`-resolved before launch; if a folder no longer exists, the launch aborts with a notification (it does *not* auto-recreate).
 
 ## Behaviors worth knowing before editing
@@ -54,3 +70,4 @@ Pressing `c` on a row opens a tmux layout — left pane runs `claude` (resumes v
 - **Subtask/parent sync** (`action_toggle`): checking the last subtask auto-completes the parent; unchecking one re-opens a completed parent.
 - **Reviving** — toggling a *done* todo while viewing a past day un-completes it, moves it to today, and jumps the view to today.
 - **Adding is today-only** — `action_add` / `action_add_sub` refuse unless `_viewing_today()`.
+- **Collapse state is per-parent and in-memory only** — `TodoApp._collapsed: set[str]` of parent ids; reset on app restart. `enter` toggles collapse for the parent owning the selected row (works on parent or subtask). Triggered via `ListView.Selected` (not a key binding), so it never fires while a modal form is open — that lets `enter` still submit the form.

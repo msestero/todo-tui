@@ -17,7 +17,7 @@ class Subtask:
         text: str,
         folders: list[str] | None = None,
         claude_session_id: str | None = None,
-    ) -> "Subtask":
+    ) -> Subtask:
         return Subtask(
             id=uuid.uuid4().hex[:8],
             text=text,
@@ -26,7 +26,7 @@ class Subtask:
         )
 
     @classmethod
-    def from_dict(cls, raw: dict) -> "Subtask":
+    def from_dict(cls, raw: dict) -> Subtask:
         return cls(
             id=raw["id"],
             text=raw["text"],

@@ -6,7 +6,6 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label
 
-
 _FORM_CSS = """
 $form-self { align: center middle; }
 #card {

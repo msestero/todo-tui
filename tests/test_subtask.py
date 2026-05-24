@@ -24,11 +24,9 @@ def test_new_copies_folders_list():
 
 
 def test_from_dict_full():
-    raw = {"id": "abc", "text": "t", "done": True,
-           "folders": ["f1"], "claude_session_id": "sid"}
+    raw = {"id": "abc", "text": "t", "done": True, "folders": ["f1"], "claude_session_id": "sid"}
     s = Subtask.from_dict(raw)
-    assert s == Subtask(id="abc", text="t", done=True,
-                        folders=["f1"], claude_session_id="sid")
+    assert s == Subtask(id="abc", text="t", done=True, folders=["f1"], claude_session_id="sid")
 
 
 def test_from_dict_defaults_for_missing_fields():

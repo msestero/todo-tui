@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
 from todo_item import Todo
 
-
-DATA_PATH = Path(os.environ.get("TODO_TUI_DATA", Path.home() / ".config" / "todo-tui" / "todos.json"))
+DATA_PATH = Path(
+    os.environ.get("TODO_TUI_DATA", Path.home() / ".config" / "todo-tui" / "todos.json")
+)
 
 
 @dataclass
@@ -17,7 +18,7 @@ class Store:
     todos: list[Todo] = field(default_factory=list)
 
     @classmethod
-    def load(cls) -> "Store":
+    def load(cls) -> Store:
         if not DATA_PATH.exists():
             return cls()
         raw = json.loads(DATA_PATH.read_text(encoding="utf-8"))

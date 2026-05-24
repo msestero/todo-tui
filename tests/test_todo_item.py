@@ -19,8 +19,9 @@ def test_from_dict_full():
         "text": "task",
         "date": "2026-01-01",
         "done": True,
-        "subtasks": [{"id": "s1", "text": "sub", "done": False,
-                      "folders": [], "claude_session_id": None}],
+        "subtasks": [
+            {"id": "s1", "text": "sub", "done": False, "folders": [], "claude_session_id": None}
+        ],
         "folders": ["~/p"],
         "claude_session_id": "sess",
     }
@@ -42,7 +43,6 @@ def test_from_dict_backward_compat_missing_fields():
 
 
 def test_from_dict_ignores_unknown_keys():
-    raw = {"id": "x", "text": "t", "date": "2026-01-01",
-           "score": 5, "repeat_days": [1, 2]}
+    raw = {"id": "x", "text": "t", "date": "2026-01-01", "score": 5, "repeat_days": [1, 2]}
     t = Todo.from_dict(raw)
     assert t.text == "t"

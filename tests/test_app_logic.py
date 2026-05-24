@@ -3,6 +3,7 @@
 We avoid instantiating TodoApp (which would pull in Textual's event loop) by
 calling the methods directly with a minimal stub for `self`.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -33,6 +34,7 @@ def _todo_with_subs(text, sub_texts):
 
 
 # ---------------- _flatten ----------------
+
 
 def test_flatten_no_subtasks_yields_only_parent():
     t = Todo.new("solo")
@@ -75,6 +77,7 @@ def test_flatten_multiple_parents_mixed_collapse():
 
 # ---------------- completion helpers ----------------
 
+
 def test_complete_parent_sets_done_and_dates_today():
     t = Todo.new("x")
     t.date = "2020-01-01"
@@ -93,6 +96,7 @@ def test_uncomplete_parent_resets_done_and_dates_today():
 
 
 # ---------------- subtask toggle / parent sync ----------------
+
 
 def test_toggle_last_subtask_auto_completes_parent():
     t = _todo_with_subs("p", ["a", "b"])

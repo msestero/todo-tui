@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint + format check + tests must all pass.
+# Installed by install.sh as a symlink at .git/hooks/pre-commit.
+set -euo pipefail
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+cd "$REPO_DIR"
+
+VENV="$REPO_DIR/.venv/bin"
+if [[ ! -x "$VENV/ruff" || ! -x "$VENV/pytest" ]]; then
+    echo "pre-commit: missing dev deps in .venv. Run ./install.sh first." >&2
+    exit 1
+fi
+
+echo "==> ruff check"
+"$VENV/ruff" check src/ tests/
+
+echo "==> ruff format --check"
+"$VENV/ruff" format --check src/ tests/
+
+echo "==> pytest"
+"$VENV/python" -m pytest tests/ -q
+
+echo "pre-commit: all checks passed"

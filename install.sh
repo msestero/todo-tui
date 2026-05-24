@@ -28,6 +28,19 @@ echo "==> Installing runtime dependencies"
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 "$VENV_DIR/bin/pip" install --quiet -r "$REPO_DIR/requirements.txt"
 
+echo "==> Installing dev dependencies (ruff, pytest)"
+"$VENV_DIR/bin/pip" install --quiet ruff pytest
+
+# Wire up the git pre-commit hook (lint + format check + tests).
+HOOK_SRC="$REPO_DIR/scripts/pre-commit"
+HOOK_DST="$REPO_DIR/.git/hooks/pre-commit"
+if [[ -d "$REPO_DIR/.git" && -f "$HOOK_SRC" ]]; then
+    if [[ "$(readlink -f "$HOOK_DST" 2>/dev/null || true)" != "$(readlink -f "$HOOK_SRC")" ]]; then
+        echo "==> Linking git pre-commit hook"
+        ln -sf "$HOOK_SRC" "$HOOK_DST"
+    fi
+fi
+
 mkdir -p "$BIN_DIR"
 
 if [[ "$MODE" == "binary" ]]; then
