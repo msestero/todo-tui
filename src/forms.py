@@ -23,11 +23,17 @@ $form-self { align: center middle; }
 #hint { padding-top: 1; color: $text-muted; text-align: right; }
 """
 
-_HINT = "[b]enter[/] save  ·  [b]esc[/] cancel"
+_SAVE_HINT = "[b]enter[/] save  ·  [b]esc[/] cancel"
+_HINT = f"[b]↑↓[/] field  ·  {_SAVE_HINT}"
 
 
 def _parse_folders(raw: str) -> list[str]:
     return [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+
+
+def _wrap_index(current: int, delta: int, count: int) -> int:
+    """Index `delta` steps from `current`, wrapping around a list of `count`."""
+    return (current + delta) % count if count else 0
 
 
 @dataclass
@@ -89,8 +95,10 @@ class _ItemForm(ModalScreen["ItemFormResult | None"]):
 
     BINDINGS = [
         ("escape", "cancel", "Cancel"),
-        ("up", "focus_previous", ""),
-        ("down", "focus_next", ""),
+        ("up", "focus_field(-1)", ""),
+        ("down", "focus_field(1)", ""),
+        ("shift+tab", "focus_field(-1)", ""),
+        ("tab", "focus_field(1)", ""),
     ]
 
     FIELDS: ClassVar[list[FieldSpec]] = _FIELDS
@@ -115,6 +123,17 @@ class _ItemForm(ModalScreen["ItemFormResult | None"]):
 
     def on_mount(self) -> None:
         self.query_one(f"#{self.FIELDS[0].id}", Input).focus()
+
+    def action_focus_field(self, delta: int) -> None:
+        """Move focus `delta` rows through `FIELDS`, wrapping at the ends.
+
+        Bound to up/down (and tab) rather than the built-in `focus_next` /
+        `focus_previous`, which are only defined on `App` and so never resolve
+        from a screen-level binding."""
+        inputs = [self.query_one(f"#{spec.id}", Input) for spec in self.FIELDS]
+        focused = self.focused
+        current = inputs.index(focused) if focused in inputs else 0
+        inputs[_wrap_index(current, delta, len(inputs))].focus()
 
     @on(Input.Submitted)
     def _save(self) -> None:
@@ -153,7 +172,7 @@ class NewFolderForm(ModalScreen[str | None]):
             with Horizontal(classes="row"):
                 yield Label("Name")
                 yield Input(id="name", placeholder="folder name in ~/TodoList/")
-            yield Label(_HINT, id="hint")
+            yield Label(_SAVE_HINT, id="hint")
 
     def on_mount(self) -> None:
         self.query_one("#name", Input).focus()

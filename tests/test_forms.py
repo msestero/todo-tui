@@ -1,7 +1,11 @@
+import asyncio
 from dataclasses import asdict
 
+from textual.app import App
+from textual.widgets import Input
+
 from app import TodoApp
-from forms import ItemFormResult, _parse_folders
+from forms import ItemFormResult, SubtaskForm, TodoForm, _parse_folders, _wrap_index
 from subtask import Subtask
 from todo_item import Todo
 
@@ -26,6 +30,96 @@ def test_parse_drops_empty_entries():
 
 def test_parse_preserves_inner_paths():
     assert _parse_folders("~/a/b, /tmp/c") == ["~/a/b", "/tmp/c"]
+
+
+# ---------------- _wrap_index ----------------
+
+
+def test_wrap_index_steps_forward_and_back():
+    assert _wrap_index(0, 1, 3) == 1
+    assert _wrap_index(1, -1, 3) == 0
+
+
+def test_wrap_index_wraps_at_both_ends():
+    assert _wrap_index(2, 1, 3) == 0
+    assert _wrap_index(0, -1, 3) == 2
+
+
+def test_wrap_index_handles_empty_field_list():
+    assert _wrap_index(0, 1, 0) == 0
+
+
+# ---------------- form focus navigation ----------------
+
+
+class _FormHarness(App):
+    """Minimal app that just pushes `form` so a Pilot can drive it."""
+
+    def __init__(self, form):
+        super().__init__()
+        self._form = form
+
+    def on_mount(self) -> None:
+        self.push_screen(self._form)
+
+
+def _focus_after(form, keys: list[str]) -> list[str]:
+    """Press `keys` in `form` and return the focused input id after each press."""
+
+    async def run() -> list[str]:
+        app = _FormHarness(form)
+        seen: list[str] = []
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for key in keys:
+                await pilot.press(key)
+                await pilot.pause()
+                focused = app.focused
+                seen.append(focused.id if isinstance(focused, Input) else None)
+        return seen
+
+    return asyncio.run(run())
+
+
+def test_form_opens_focused_on_text():
+    assert _focus_after(TodoForm(), []) == []
+    # first field is focused before any key is pressed
+    assert _focus_after(TodoForm(), ["down", "up"]) == ["folders", "text"]
+
+
+def test_down_walks_fields_and_wraps_to_top():
+    assert _focus_after(TodoForm(), ["down", "down", "down"]) == ["folders", "session", "text"]
+
+
+def test_up_from_first_field_wraps_to_last():
+    assert _focus_after(TodoForm(), ["up"]) == ["session"]
+
+
+def test_tab_navigates_the_same_fields():
+    assert _focus_after(TodoForm(), ["tab", "tab"]) == ["folders", "session"]
+    assert _focus_after(TodoForm(), ["shift+tab"]) == ["session"]
+
+
+def test_subtask_form_navigates_too():
+    assert _focus_after(SubtaskForm(), ["down", "up", "up"]) == ["folders", "text", "session"]
+
+
+def test_arrows_do_not_disturb_typed_text():
+    """Up/down move focus; they must not eat or alter the input's contents."""
+
+    async def run() -> tuple[str, str]:
+        app = _FormHarness(TodoForm(ItemFormResult(text="hello", folders=["a"])))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("down", "up")
+            await pilot.pause()
+            screen = app.screen
+            return (
+                screen.query_one("#text", Input).value,
+                screen.query_one("#folders", Input).value,
+            )
+
+    assert asyncio.run(run()) == ("hello", "a")
 
 
 # ---------------- ItemFormResult ----------------
